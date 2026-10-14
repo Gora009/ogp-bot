@@ -4,6 +4,7 @@ import { ApplicationCommandOptionType as O, EmbedBuilder } from 'discord.js';
 import { can, hasRulesFor, memberHas, trustedUsers } from './access.js';
 import { C, EPH, nowTs, safeText, stamp } from './util.js';
 import { db } from './db.js';
+import { fetchPost, forumThreadUrl } from './forum.js';
 
 /**
  * Разбор Google-документа (дело, законопроект, жалоба): не пересказ, а точная суть и требования.
@@ -104,9 +105,9 @@ export const TYPES = {
 
 export const analyzeCommand = {
   name: 'analyze',
-  description: 'Разбор Google-документа: суть и требования (дело, законопроект, жалоба)',
+  description: 'Разбор Google-документа или темы форума: суть и требования',
   options: [
-    { name: 'url', description: 'Ссылка на Google Документ (доступ «Все, у кого есть ссылка»)', type: O.String, required: true, max_length: 300 },
+    { name: 'url', description: 'Ссылка на Google Документ или на тему форума gta5rp.com', type: O.String, required: true, max_length: 300 },
     {
       name: 'type', description: 'Тип документа', type: O.String, required: true,
       choices: Object.entries(TYPES).map(([value, t]) => ({ name: t.label, value })),
@@ -647,18 +648,32 @@ export async function analyze(client, i) {
   }
   const url = i.options.getString('url');
   const type = Object.hasOwn(TYPES, i.options.getString('type')) ? i.options.getString('type') : 'other';
+  // источник: Google Документ или тема форума gta5rp.com (жалобы, обращения)
   const id = docId(url);
-  if (!id) return i.reply({ content: '⚠️ Нужна ссылка на Google Документ вида https://docs.google.com/document/d/…', ...EPH });
+  const thread = id ? null : forumThreadUrl(url);
+  if (!id && !thread) {
+    return i.reply({ content: '⚠️ Нужна ссылка на Google Документ (https://docs.google.com/document/d/…) или на тему форума (https://forum.gta5rp.com/threads/…).', ...EPH });
+  }
   await i.deferReply(EPH);
   let text;
+  let title;
+  let link;
   try {
-    text = await fetchDoc(id);
+    if (id) {
+      text = await fetchDoc(id);
+      title = docTitle(text);
+      link = `https://docs.google.com/document/d/${id}`;
+    } else {
+      ({ title, text } = await fetchPost(thread));
+      link = thread;
+      if (!text || text.length < 30) throw new DocError('Тема не найдена или первое сообщение пустое — проверьте ссылку.');
+    }
   } catch (e) {
-    return i.editReply({ content: `⚠️ ${e instanceof DocError ? e.message : 'Не удалось открыть документ.'}` });
+    return i.editReply({ content: `⚠️ ${e instanceof DocError ? e.message : id ? 'Не удалось открыть документ.' : 'Не удалось открыть тему форума.'}` });
   }
   const r = await analyzeText(text, type, i.user.id);
   return i.editReply({
-    embeds: [resultEmbed({ title: docTitle(text), url: `https://docs.google.com/document/d/${id}`, typeLabel: TYPES[type].label, ...r })],
+    embeds: [resultEmbed({ title, url: link, typeLabel: TYPES[type].label, ...r })],
     __noLogo: true,
   });
 }

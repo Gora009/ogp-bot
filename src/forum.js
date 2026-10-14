@@ -61,8 +61,27 @@ export async function fetchComplaintDetails(url) {
 
 /** Полный текст первого сообщения темы (для кнопки «Подробно» в жалобе) */
 export async function fetchFirstPost(url) {
+  return (await fetchPost(url)).text;
+}
+
+/** Тема форума: заголовок и текст первого сообщения (для /analyze по ссылке на форум) */
+export async function fetchPost(url) {
   const $ = cheerio.load(await fetchHtml(url));
+  const title = $('h1.p-title-value').first().text().replace(/\s+/g, ' ').trim();
   const body = $('.message-body .bbWrapper').first();
+  return { title, text: postText($, body) };
+}
+
+/** Ссылка на тему форума gta5rp.com (только https и только /threads/…), иначе null */
+export function forumThreadUrl(raw) {
+  try {
+    const u = new URL(String(raw).trim());
+    if (u.protocol !== 'https:' || u.hostname !== 'forum.gta5rp.com' || !/^\/threads\/[^/]+\.\d+/.test(u.pathname)) return null;
+    return `${BASE}${/^\/threads\/[^/]+\.\d+/.exec(u.pathname)[0]}/`;
+  } catch { return null; }
+}
+
+function postText($, body) {
   // ссылки на доказательства сохраняем в виде [текст](адрес) — в «Подробно» они кликабельны
   body.find('a[href]').each((_, a) => {
     let url = null;
