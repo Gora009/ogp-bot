@@ -138,7 +138,6 @@ function pickerRows(tid, page, selId, pgId, extra = [], c = null, withAuto = fal
 const unassignedRows = (c, page = 0) => pickerRows(c.thread_id, page, 'c:sel', 'c:pg', [
   new ButtonBuilder().setCustomId(`c:auto:${c.thread_id}`).setLabel('🎲 Авто').setStyle(ButtonStyle.Primary),
   new ButtonBuilder().setCustomId(`c:ref:${c.thread_id}:${page}`).setLabel('🔄 Обновить список').setStyle(ButtonStyle.Secondary),
-  summaryButton(c),
 ], c);
 
 function actionRows(c) {
@@ -148,12 +147,8 @@ function actionRows(c) {
       .setEmoji(accepted ? '✔️' : '✅').setStyle(accepted ? ButtonStyle.Secondary : ButtonStyle.Success).setDisabled(accepted),
     new ButtonBuilder().setCustomId(`c:re:${c.thread_id}`).setLabel('Переназначить').setEmoji('🔄').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`c:cl:${c.thread_id}`).setLabel('Закрыть').setEmoji('📝').setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId(`c:inf:${c.thread_id}`).setLabel('Инфо').setEmoji('ℹ️').setStyle(ButtonStyle.Secondary),
-    summaryButton(c))];
+    new ButtonBuilder().setCustomId(`c:inf:${c.thread_id}`).setLabel('Инфо').setEmoji('ℹ️').setStyle(ButtonStyle.Secondary))];
 }
-/** «Краткое содержание» — прямо на карточке жалобы, рядом с «Инфо» */
-const summaryButton = (c) => new ButtonBuilder().setCustomId(`c:det:${c.thread_id}`).setLabel('Краткое содержание')
-  .setEmoji('📄').setStyle(ButtonStyle.Secondary);
 
 /** Полное содержимое сообщения жалобы в канале для её текущего состояния. */
 export function messagePayload(c, page = 0) {
@@ -367,17 +362,21 @@ async function handleComplaint(client, i) {
   }
 
   // --- инфо и продление дедлайнов ---
-  if (action === 'inf') return i.reply({ embeds: [infoEmbed(c)], ...EPH });
-  // «Краткое содержание» (кнопка на карточке): суть жалобы и требования заявителя из первого сообщения темы.
-  // Ответ виден только нажавшему и стоит прямо под карточкой бота, как «Инфо».
+  if (action === 'inf') {
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`c:det:${c.thread_id}`).setLabel('Краткое содержание').setEmoji('📄').setStyle(ButtonStyle.Secondary));
+    return i.reply({ embeds: [infoEmbed(c)], components: [row], ...EPH });
+  }
+  // «Краткое содержание» (кнопка в «Инфо»): суть жалобы и требования заявителя из первого сообщения темы.
+  // Дописывается в то же сообщение «Инфо» — оно и остаётся там же, под карточкой, где нажали «Инфо».
   if (action === 'det') {
-    await i.deferReply(EPH);
+    await i.deferUpdate();
+    const info = EmbedBuilder.from(infoEmbed(c).toJSON()).setThumbnail('attachment://logo.webp');
     const text = await fetchFirstPost(c.url).catch(() => null);
-    if (!text) return i.editReply({ content: '⚠️ Не удалось открыть тему жалобы на форуме. Попробуйте позже.' });
+    if (!text) return i.followUp({ content: '⚠️ Не удалось открыть тему жалобы на форуме. Попробуйте позже.', ...EPH });
     const r = await analyzeText(text, 'complaint', i.user.id, { paid: await mayUseAI(client, i) });
-    return i.editReply({
-      embeds: [resultEmbed({ title: `Жалоба №${c.number ?? '—'}`, url: c.url, typeLabel: 'Краткое содержание', ...r })], __noLogo: true,
-    });
+    const summary = resultEmbed({ title: `Жалоба №${c.number ?? '—'}`, url: c.url, typeLabel: 'Краткое содержание', ...r });
+    return i.editReply({ embeds: [info, summary], components: [], __noLogo: true });
   }
   if (action === 'xr' || action === 'xc') {
     if (!canControl(i)) return i.reply({ content: '⛔ Продлевать дедлайны может руководство.', ...EPH });
