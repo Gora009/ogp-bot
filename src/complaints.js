@@ -239,7 +239,12 @@ const canAct = (i, c) => i.user.id === c.assignee_id || isLeader(i);
 const canAssign = (i) => can(i, 'assign') || isLeader(i);
 const isResponsible = (i) => !!db.prepare('SELECT 1 FROM deadline_responsible WHERE user_id=?').get(i.user.id);
 /** Контроль дедлайнов (продление, закрытие просроченных): руководство, «Мониторинг и дедлайны», ответственные */
-const canControl = (i) => isLeader(i) || can(i, 'monitor') || isResponsible(i);
+const canControl = (i) => isLeader(i) || isSenior(i) || can(i, 'monitor') || isResponsible(i);
+
+/** Кнопки продления дедлайнов в «Инфо» — только старшему составу и только у открытой жалобы */
+const extendRows = (i, c) => (isSenior(i) && c.status !== 'closed' ? [new ActionRowBuilder().addComponents(
+  new ButtonBuilder().setCustomId(`c:xr:${c.thread_id}`).setLabel('Продлить дедлайн ответа').setEmoji('⏰').setStyle(ButtonStyle.Secondary),
+  new ButtonBuilder().setCustomId(`c:xc:${c.thread_id}`).setLabel('Продлить дедлайн закрытия').setEmoji('⏰').setStyle(ButtonStyle.Secondary))] : []);
 const deny = (i) => i.reply({ content: '⛔ Это действие доступно исполнителю жалобы и руководству.', ...EPH });
 /** Переназначать — только старший состав от ЗГП: право «Распределение жалоб» (и «Полный доступ» у ГП) */
 const canReassign = (i) => can(i, 'assign');
@@ -365,7 +370,7 @@ async function handleComplaint(client, i) {
   if (action === 'inf') {
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`c:det:${c.thread_id}`).setLabel('Краткое содержание').setEmoji('📄').setStyle(ButtonStyle.Secondary));
-    return i.reply({ embeds: [infoEmbed(c)], components: [row], ...EPH });
+    return i.reply({ embeds: [infoEmbed(c)], components: [row, ...extendRows(i, c)], ...EPH });
   }
   // «Краткое содержание» (кнопка в «Инфо»): суть жалобы и требования заявителя из первого сообщения темы.
   // Дописывается в то же сообщение «Инфо» — оно и остаётся там же, под карточкой, где нажали «Инфо».
@@ -376,7 +381,7 @@ async function handleComplaint(client, i) {
     if (!text) return i.followUp({ content: '⚠️ Не удалось открыть тему жалобы на форуме. Попробуйте позже.', ...EPH });
     const r = await analyzeText(text, 'complaint', i.user.id, { paid: await mayUseAI(client, i) });
     const summary = resultEmbed({ title: `Жалоба №${c.number ?? '—'}`, url: c.url, typeLabel: 'Краткое содержание', ...r });
-    return i.editReply({ embeds: [info, summary], components: [], __noLogo: true });
+    return i.editReply({ embeds: [info, summary], components: extendRows(i, c), __noLogo: true });
   }
   if (action === 'xr' || action === 'xc') {
     if (!canControl(i)) return i.reply({ content: '⛔ Продлевать дедлайны может руководство.', ...EPH });
