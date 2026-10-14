@@ -370,7 +370,7 @@ async function handleComplaint(client, i) {
   if (action === 'inf') {
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`c:det:${c.thread_id}`).setLabel('Краткое содержание').setEmoji('📄').setStyle(ButtonStyle.Secondary));
-    return i.reply({ embeds: [infoEmbed(c)], components: [row, ...extendRows(i, c)], ...EPH });
+    return i.reply({ embeds: [infoEmbed(c)], components: [...extendRows(i, c), row], ...EPH });
   }
   // «Краткое содержание» (кнопка в «Инфо»): суть жалобы и требования заявителя из первого сообщения темы.
   // Дописывается в то же сообщение «Инфо» — оно и остаётся там же, под карточкой, где нажали «Инфо».
