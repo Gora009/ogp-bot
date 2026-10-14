@@ -63,6 +63,18 @@ export async function fetchComplaintDetails(url) {
 export async function fetchFirstPost(url) {
   const $ = cheerio.load(await fetchHtml(url));
   const body = $('.message-body .bbWrapper').first();
+  // ссылки на доказательства сохраняем в виде [текст](адрес) — в «Подробно» они кликабельны
+  body.find('a[href]').each((_, a) => {
+    let url = null;
+    try {
+      let u = new URL($(a).attr('href'), BASE);
+      // внешние ссылки форум прячет за gta5rp.com/away?to=… — показываем настоящий адрес
+      if (u.pathname === '/away' && u.searchParams.get('to')) u = new URL(u.searchParams.get('to'));
+      if (/^https?:$/.test(u.protocol)) url = u.href.replace(/[()\s]/g, (c) => encodeURIComponent(c));
+    } catch { /* битая ссылка */ }
+    const label = $(a).text().replace(/\s+/g, ' ').replace(/[[\]]/g, '').trim() || 'ссылка';
+    $(a).replaceWith($('<span>').text(url ? `[${label.slice(0, 120)}](${url})` : label));
+  });
   body.find('br').replaceWith('\n');
   return body.text().replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
