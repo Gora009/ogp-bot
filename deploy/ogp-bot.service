@@ -1,0 +1,27 @@
+# Служба systemd для бота ОГП на Ubuntu.
+# Установка: cp deploy/ogp-bot.service /etc/systemd/system/ && systemctl enable --now ogp-bot
+[Unit]
+Description=OGP Discord bot
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=ogpbot
+Group=ogpbot
+WorkingDirectory=/opt/ogp-bot
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=5
+# код 2 — «бот уже запущен» (data/bot.lock): не перезапускать по кругу
+RestartPreventExitStatus=2
+Environment=NODE_ENV=production
+
+# защита: бот может писать только в свою папку
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/ogp-bot
+
+[Install]
+WantedBy=multi-user.target

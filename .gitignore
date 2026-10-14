@@ -1,0 +1,7 @@
+node_modules/
+.env
+data/
+*.log
+*.tgz
+bot.lock
+deploy/server.local
