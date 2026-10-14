@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import * as cheerio from 'cheerio';
-import { ActionRowBuilder, ApplicationCommandOptionType as O, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
-import { can, memberHas, trustedUsers } from './access.js';
+import { ApplicationCommandOptionType as O, EmbedBuilder } from 'discord.js';
+import { can, hasRulesFor, memberHas, trustedUsers } from './access.js';
 import { C, EPH, nowTs, safeText, stamp } from './util.js';
 import { db } from './db.js';
 
@@ -27,16 +27,29 @@ export const TYPES = {
     hint: [
       'Документ — уголовное дело / обвинительное заключение прокуратуры. Ответ строго в таком виде:',
       'Обвиняемый:',
-      'Имя Фамилия: <из анкеты обвиняемого>',
-      'Паспорт: <номер паспорта>',
+      'Имя Фамилия: <имя и фамилия ОБВИНЯЕМОГО из его анкеты — не потерпевшего, не заявителя, не прокурора>',
+      'Паспорт: <номер документа обвиняемого: паспорт, ID-карта или удостоверение личности — это одно и то же; только номер>',
       'Статьи: <ч. и ст. с названием кодекса, через запятую>',
       'Суть:',
-      '<одно-два предложения: что сделал обвиняемый, где и когда>',
+      '<одно-два предложения, начни с имени обвиняемого: «<Имя Фамилия>, <должность и организация, если есть>, …» — что сделал, где и когда>',
       'Требования:',
       '1. <что прокуратура просит у суда: признать виновным по статьям, наказание (срок, штраф), лишение лицензий, возмещение вреда>',
+      'Проверка:',
+      '1. <расхождение внутри документа: что именно не совпадает и где>',
       'Материалы дела:',
       '1. [<наименование материала>](<ссылка>)',
       '',
+      '«Проверка» — сверь документ сам с собой и перечисли каждое противоречие между его частями (вступление, анкета,',
+      'описание, квалификация, требования, опись):',
+      '- имя и фамилия обвиняемого написаны по-разному или в конце дела указан другой человек;',
+      '- разные номера паспорта / ID, дата рождения, должность или организация обвиняемого;',
+      '- разные даты и время одного события, номера постановлений, обращений или дела (УИН);',
+      '- статьи в обвинении, квалификации и требованиях не совпадают; пол обвиняемого («виновным» / «виновной») не совпадает;',
+      '- материал упомянут в тексте, но отсутствует в описи (или наоборот).',
+      'Пиши кратко с цитатами: «во вступлении — Emily Parr, в требованиях — Emily Par». Потерпевшие, свидетели и прокурор —',
+      'другие люди, это не расхождение. Только настоящие противоречия в фактах (имена, номера, даты, время, статьи, суммы, сроки):',
+      'разные формулировки одного и того же материала, неточности стиля и опечатки без смены смысла — НЕ расхождения.',
+      'Не больше 6 пунктов, самые важные первыми. Если противоречий нет — одна строка «1. Расхождений не найдено».',
       'Если обвиняемых несколько — блок «Обвиняемый:» для каждого. Требования, если прямо не сформулированы, выведи из квалификации',
       '(«Признать виновным по ч. … ст. …»). «Материалы дела» — все материалы из описи / списка доказательств, по одному в строке,',
       'со ссылкой, если она есть в документе; вложенные пункты описи — отдельными строками. Не больше 25 строк.',
@@ -211,7 +224,7 @@ async function viaOpenAICompatible(p, text, type) {
       temperature: 0.2,
       messages: [
         { role: 'system', content: systemFor(type) },
-        { role: 'user', content: docMessage(text) },
+        { role: 'user', content: docMessage(text, type) },
       ],
     }),
     signal: AbortSignal.timeout(180_000),
@@ -220,7 +233,7 @@ async function viaOpenAICompatible(p, text, type) {
   const data = await res.json();
   logUsage(p, data?.usage?.prompt_tokens, data?.usage?.completion_tokens, data?.usage?.prompt_cache_hit_tokens);
   const out = String(data?.choices?.[0]?.message?.content ?? '').replace(/\*\*/g, '').trim();
-  return /Суть\s*:/i.test(out) ? out.slice(out.search(/Суть\s*:/i)) : null;
+  return answerFrom(out);
 }
 
 async function viaAI(text, type) {
@@ -250,7 +263,25 @@ const SYSTEM = [
 const systemFor = (type) => `${SYSTEM}\n\n${TYPES[type].hint}`;
 
 /** Документ без «воды» для токенов: линии из подчёркиваний, лишние пробелы, пустые строки */
-const docMessage = (text) => `<document>\n${text
+/**
+ * Ответ модели без вступления («Вот разбор:») — с первого раздела формата, каким бы он ни был
+ * (Обвиняемый / Заявитель / Суть). null — ответ не в нашем формате.
+ */
+function answerFrom(out) {
+  const at = String(out).replace(/\*\*/g, '').search(/^(?:Обвиняемый|Заявитель|Суть)\s*:/m);
+  if (at < 0 || !/^Суть\s*:/m.test(out.replace(/\*\*/g, ''))) return null;
+  return out.replace(/\*\*/g, '').slice(at).trim();
+}
+
+/** Короткое напоминание после документа: на длинном тексте модели забывают начало инструкции */
+const REMIND = {
+  case: 'Ответ начни строкой «Обвиняемый:», затем «Имя Фамилия:», «Паспорт:», «Статьи:» — каждое с новой строки. Не пропусти раздел «Проверка:».',
+  bill: 'Ответ начни строкой «Суть:».',
+  complaint: 'Ответ начни строкой «Заявитель:».',
+  other: 'Ответ начни строкой «Суть:».',
+};
+const docMessage = (text, type) => `${docBody(text)}\n\n${REMIND[type] ?? ''} Строго в заданном виде.`;
+const docBody = (text) => `<document>\n${text
   .replace(/^[\s_\-–—=*]{3,}$/gm, '')
   .replace(/[ \t ]{2,}/g, ' ')
   .replace(/\n\s*\n+/g, '\n')
@@ -269,7 +300,7 @@ async function viaClaude(p, text, type) {
     model: p.model,
     max_tokens: 1500,
     system: systemFor(type),
-    messages: [{ role: 'user', content: docMessage(text) }],
+    messages: [{ role: 'user', content: docMessage(text, type) }],
   };
   let msg;
   try {
@@ -282,7 +313,7 @@ async function viaClaude(p, text, type) {
   logUsage(p, msg.usage?.input_tokens, msg.usage?.output_tokens);
   if (msg.stop_reason === 'refusal') return null;
   const out = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
-  return /Суть\s*:/i.test(out) ? out : null;
+  return answerFrom(out);
 }
 
 /* ---------- разбор: без ИИ (запасной вариант) ---------- */
@@ -330,6 +361,109 @@ function materials(withLinks) {
   return out;
 }
 
+/**
+ * Обвиняемый из анкеты дела: имя, номер документа (паспорт / ID-карта / удостоверение — для нас это одно и то же),
+ * статьи из формулировки обвинения «по обвинению … в совершении … ст. …».
+ */
+export function accused(withLinks) {
+  const text = withLinks.replace(/\[([^\]\n]*)\]\((https?:[^)\s]*)\)/g, '$1');
+  // поле анкеты «1. Фамилия, имя …:» и значение (в той же или следующей строке), не середина слова
+  const name = /(?:фамилия[, ]+имя|имя[, ]+фамилия|\bф\.\s?и\.\s?о\.?|\bфио\b)[^:\n]{0,60}:\s*\|?\s*\n?\s*([A-Za-zА-Яа-яЁё'-]{2,} [A-Za-zА-Яа-яЁё'-]{2,})/i.exec(text)?.[1]
+    ?? /по обвинению\s+(?:гр(?:аждан(?:ина|ки))?\.?\s*)?([A-Z][a-z'-]+ [A-Z][a-z'-]+)/.exec(text)?.[1] ?? null;
+  const passport = /(?:номер паспорта|паспорт|удостоверяющий личность|ID-карт|\bID\b)[^:\n\d]{0,80}:?\s*\|?\s*\n?[^\n\d]{0,40}?(\d{3,9})\b/i.exec(text)?.[1] ?? null;
+  const charge = /по обвинению[^\n]{5,400}/i.exec(text)?.[0] ?? '';
+  const articles = uniq([...charge.matchAll(/(?:ч(?:асти|\.)?\s*\d+\s*)?(?:ст(?:атьи|\.)?)\s*\d+(?:\.\d+)*|ч\s?\d+\s+\d+(?:\.\d+)+/giu)].map((m) => m[0].trim()));
+  return { name, passport, articles };
+}
+
+/**
+ * Ответ ИИ по делу: блок «Обвиняемый» обязателен. Если модель его пропустила или не нашла паспорт —
+ * подставляем данные из анкеты документа.
+ */
+/**
+ * Проверки дела без ИИ: обвиняемый во вступлении, анкете и требованиях — один и тот же человек,
+ * номер документа везде один, статьи обвинения и требований совпадают.
+ */
+/** Номера статей: 15.6, 12.8, 15.1.1 (даты 16.10.2026 и суммы 50.000$ не подходят) */
+const normArt = (s) => [...String(s).matchAll(/(?<![\d.])\d{1,2}(?:\.\d{1,2}){1,2}(?![\d.]|\.\d)/g)].map((m) => m[0]);
+/** Кусок текста после якоря до конца предложения (точки в «гр.», «ст.», «ч.» и в номерах статей — не конец) */
+const sentenceAfter = (flat, re, max = 400) => {
+  const m = re.exec(flat);
+  if (!m) return '';
+  const s = flat.slice(m.index, m.index + max);
+  const end = s.search(/(?<!\b(?:гр|ст|ч|п|г|им|т\.е|т\.к))\.\s+[А-ЯЁA-Z]/u);
+  return end < 0 ? s : s.slice(0, end);
+};
+const sameName = (a, b) => a.toLowerCase().replace(/ё/g, 'е') === b.toLowerCase().replace(/ё/g, 'е');
+export function caseChecks(withLinks) {
+  const text = withLinks.replace(/\[([^\]\n]*)\]\((https?:[^)\s]*)\)/g, '$1');
+  const flat = text.replace(/\s+/g, ' ');
+  const issues = [];
+  const NAME = "([A-Z][a-z'-]+ [A-Z][a-z'-]+)";
+  const intro = new RegExp(`по обвинению\\s+(?:гр(?:аждан(?:ина|ки))?\\.?\\s*)?${NAME}`).exec(flat)?.[1];
+  const card = /(?:фамилия[, ]+имя|имя[, ]+фамилия|\bфио\b)[^:\n]{0,60}:\s*\|?\s*\n?\s*([A-Za-z'-]{2,} [A-Za-z'-]{2,})/i.exec(text)?.[1];
+  const plea = [...flat.matchAll(new RegExp(`(?:признани[еяи]|признать)\\s+(?:гр(?:аждан(?:ина|ки))?\\.?\\s*)?${NAME}\\s+виновн`, 'g'))].at(-1)?.[1]
+    ?? [...flat.matchAll(new RegExp(`виновн\\S*\\s+(?:гр(?:аждан(?:ина|ки))?\\.?\\s*)?${NAME}`, 'g'))].at(-1)?.[1];
+  const where = [['во вступлении', intro], ['в анкете', card], ['в требованиях', plea]].filter(([, n]) => n);
+  for (let k = 1; k < where.length; k++) {
+    if (!sameName(where[0][1], where[k][1])) issues.push(`Обвиняемый: ${where[0][0]} — ${where[0][1]}, ${where[k][0]} — ${where[k][1]}`);
+  }
+  const docs = uniq([...text.matchAll(/(?:номер паспорта|паспорт[^\n:]{0,30}|ID-карт\S*[^\n:\d]{0,20}|удостоверяющий личность[^\n:\d]{0,20})[:\s|]*(?:паспорт,?\s*)?№?\s*(\d{4,9})\b/gi)].map((m) => m[1]));
+  if (docs.length > 1) issues.push(`Номер паспорта / ID в документе разный: ${docs.join(', ')}`);
+  const charged = uniq(normArt(sentenceAfter(flat, /по обвинению/i)));
+  const pleas = [...flat.matchAll(/(?:признани[еяи]|признать)\s+(?:\S+\s+){0,4}?виновн/g)];
+  const asked = pleas.length ? uniq(normArt(sentenceAfter(flat.slice(pleas.at(-1).index), /./))) : [];
+  // «действия … квалифицируются по ч. 1 ст. 15.1.1 …» — итоговая квалификация
+  // только итоговая формула про обвиняемого («действия Treodo Price … квалифицируются по …»), а не рассуждения
+  // в тексте («не могут квалифицироваться по …», «ч. 2 ст. 17.2 квалифицируется, если …»)
+  const surname = intro?.split(' ')[1];
+  const quals = [...flat.matchAll(/(?:квалифицируются|квалифицированы)\s+по/gi)]
+    .filter((m) => { const pre = flat.slice(Math.max(0, m.index - 200), m.index); return (surname && pre.includes(surname)) || /обвиняем/i.test(pre); });
+  const qualified = quals.length ? uniq(normArt(sentenceAfter(flat.slice(quals.at(-1).index), /./))) : [];
+  const parts = [['во вступлении', charged], ['в квалификации', qualified], ['в требованиях', asked]].filter(([, a]) => a.length);
+  for (let k = 1; k < parts.length; k++) {
+    const [w0, a0] = parts[0];
+    const [wk, ak] = parts[k];
+    if (a0.some((x) => !ak.includes(x)) || ak.some((x) => !a0.includes(x))) {
+      issues.push(`Статьи ${w0} (${a0.join(', ')}) и ${wk} (${ak.join(', ')}) не совпадают`);
+    }
+  }
+  return issues;
+}
+
+/** Добавляет найденные ботом расхождения в раздел «Проверка» (если ИИ их не упомянул) */
+function mergeChecks(out, issues) {
+  if (!issues.length) return out;
+  const lines = out.split('\n');
+  let at = lines.findIndex((l) => /^Проверка\s*:/.test(l));
+  if (at < 0) {
+    const before = lines.findIndex((l) => /^Материалы дела\s*:/.test(l));
+    at = before < 0 ? lines.length : before;
+    lines.splice(at, 0, 'Проверка:');
+  }
+  // пункты раздела — до следующего заголовка
+  let end = at + 1;
+  while (end < lines.length && !/^[А-ЯЁ][А-Яа-яЁё ]{2,30}:\s*$/.test(lines[end])) end++;
+  const items = lines.slice(at + 1, end).map((l) => l.replace(/^\s*\d+[.)]\s*/, '').trim())
+    .filter((l) => l && !/расхождений не найдено/i.test(l));
+  const known = items.join(' ').toLowerCase();
+  for (const x of issues) if (!x.split(/[:,—()\s]+/).filter((w) => /\d|^[A-Z]/.test(w)).every((w) => known.includes(w.toLowerCase()))) items.push(x);
+  lines.splice(at + 1, end - at - 1, ...items.map((x, n) => `${n + 1}. ${x}`));
+  return lines.join('\n');
+}
+
+function ensureAccused(out, withLinks) {
+  const a = accused(withLinks);
+  if (!/^Имя Фамилия\s*:/m.test(out)) {
+    const arts = /^Статьи\s*:/m.test(out) ? '' : `\nСтатьи: ${a.articles.join(', ') || 'не указано'}`;
+    out = `Обвиняемый:\nИмя Фамилия: ${a.name ?? 'не указано'}\nПаспорт: ${a.passport ?? 'не указано'}${arts}\n` +
+      out.replace(/^Обвиняемый\s*:\s*\n/m, '');
+  }
+  if (a.passport) out = out.replace(/^Паспорт\s*:\s*(?:не указано|—|-)?\s*$/m, `Паспорт: ${a.passport}`);
+  if (a.name) out = out.replace(/^Имя Фамилия\s*:\s*(?:не указано|—|-)?\s*$/m, `Имя Фамилия: ${a.name}`);
+  return out;
+}
+
 export function heuristic(withLinks, type) {
   const text = withLinks.replace(/\[([^\]\n]*)\]\((https?:[^)\s]*)\)/g, '$1');
   const flat = text.replace(/\s+/g, ' ');
@@ -362,15 +496,12 @@ export function heuristic(withLinks, type) {
   const list = (items, empty) => (items.length ? items.map((x, n) => `${n + 1}. ${x}`).join('\n') : empty);
   const body = `Суть:\n${clip(essence.trim(), 600) || '—'}\n${type === 'bill' ? 'Изменения' : 'Требования'}:\n${list(reqs, '— явно не указаны —')}`;
   if (type === 'case') {
-    // поле анкеты «1. Фамилия, имя …:» и значение (в той же или следующей строке), не середина слова
-    const name = /(?:фамилия[, ]+имя|имя[, ]+фамилия|\bф\.\s?и\.\s?о\.?|\bфио\b)[^:\n]{0,60}:\s*\|?\s*\n?\s*([A-Za-zА-Яа-яЁё'-]{2,} [A-Za-zА-Яа-яЁё'-]{2,})/i.exec(text)?.[1]
-      ?? /по обвинению\s+(?:гр\.?\s*)?([A-Z][a-z'-]+ [A-Z][a-z'-]+)/.exec(text)?.[1];
-    const passport = /(?:паспорт|удостоверяющий личность|ID-карт)[^:\n\d]{0,80}:?\s*\|?\s*\n?[^\n\d]{0,40}?(\d{3,9})\b/i.exec(text)?.[1];
-    // статьи — из формулировки обвинения, а не все упомянутые в тексте
-    const charged = uniq([...essence.matchAll(/(?:ч(?:асти|\.)?\s*\d+\s*)?(?:ст(?:атьи|\.)?)\s*\d+(?:\.\d+)*|ч\s?\d+\s+\d+(?:\.\d+)+/giu)].map((m) => m[0].trim()));
-    const head = `Обвиняемый:\nИмя Фамилия: ${name ?? 'не указано'}\nПаспорт: ${passport ?? 'не указано'}\n` +
-      `Статьи: ${(charged.length ? charged : articles.slice(0, 5)).join(', ') || 'не указано'}`;
-    return `${head}\n${body}\nМатериалы дела:\n${list(materials(withLinks), '— ссылок в документе нет —')}`;
+    const a = accused(withLinks);
+    const head = `Обвиняемый:\nИмя Фамилия: ${a.name ?? 'не указано'}\nПаспорт: ${a.passport ?? 'не указано'}\n` +
+      `Статьи: ${(a.articles.length ? a.articles : articles.slice(0, 5)).join(', ') || 'не указано'}`;
+    const issues = caseChecks(withLinks);
+    const check = `Проверка:\n${list(issues, '1. Явных расхождений имени, паспорта и статей не найдено (полная проверка — с ИИ)')}`;
+    return `${head}\n${body}\n${check}\nМатериалы дела:\n${list(materials(withLinks), '— ссылок в документе нет —')}`;
   }
   const links = materials(withLinks);
   if (type !== 'complaint') return body;
@@ -389,7 +520,7 @@ export function heuristic(withLinks, type) {
  */
 db.exec(`CREATE TABLE IF NOT EXISTS ai_cache (key TEXT PRIMARY KEY, result TEXT NOT NULL, created_ts INTEGER NOT NULL)`);
 const KEEP_DAYS = 180;
-const cacheKey = (text, type) => `v2:${type}:${createHash('sha256').update(text.replace(/\s+/g, ' ').trim()).digest('hex')}`;
+const cacheKey = (text, type) => `v5:${type}:${createHash('sha256').update(text.replace(/\s+/g, ' ').trim()).digest('hex')}`;
 const fromCache = (key) => db.prepare('SELECT result FROM ai_cache WHERE key=?').get(key)?.result ?? null;
 function toCache(key, result) {
   db.prepare('INSERT OR REPLACE INTO ai_cache(key,result,created_ts) VALUES(?,?,?)').run(key, result, nowTs());
@@ -399,19 +530,22 @@ const inFlight = new Map(); // двое запросили один докуме
 
 /**
  * userId — для лимита: он считает только платные запросы, повторы из кеша бесплатны и не ограничены.
- * Возвращает { text, ai, cached, limited }.
+ * Возвращает { text, ai, cached, limited, noAccess }.
  */
-export async function analyzeText(text, type, userId = null) {
+export async function analyzeText(text, type, userId = null, { paid = true } = {}) {
   const key = cacheKey(text, type);
   const hit = fromCache(key);
   if (hit) return { text: hit, ai: true, cached: true };
   if (inFlight.has(key)) return { ...await inFlight.get(key), cached: true };
+  // нет права на ИИ: сохранённый разбор показываем (он уже оплачен), новый не заказываем
+  if (!paid) return { text: heuristic(text, type), ai: false, noAccess: true };
   if (!provider()) return { text: heuristic(text, type), ai: false };
   if (userId && !allow(userId)) return { text: heuristic(text, type), ai: false, limited: true };
 
   const job = (async () => {
     try {
-      const result = await viaAI(text, type);
+      const raw = await viaAI(text, type);
+      const result = raw && type === 'case' ? mergeChecks(ensureAccused(raw, text), caseChecks(text)) : raw;
       if (result) { toCache(key, result); return { text: result, ai: true }; }
     } catch (e) {
       console.error('analyze (AI):', e?.status ?? '', e?.message);
@@ -426,7 +560,10 @@ export async function analyzeText(text, type, userId = null) {
 export function formatResult(text) {
   const lines = [];
   let size = 0;
-  for (const raw of String(text).replace(/\*\*/g, '').split('\n')) {
+  // «Суть: текст» в одну строку → заголовок отдельно, текст ниже
+  const norm = String(text).replace(/\*\*/g, '')
+    .replace(/^(Суть|Требования|Изменения|Основные положения|Отменяется|Проверка|Материалы дела|Доказательства|Ссылки):[ \t]+(?=\S)/gm, '$1:\n');
+  for (const raw of norm.split('\n')) {
     const line = raw.trimEnd();
     if (!line.trim()) continue;
     let out;
@@ -458,25 +595,35 @@ function linkify(s) {
   return out + safeText(s.slice(last));
 }
 
-export function resultEmbed({ title, url, typeLabel, text, ai, cached, limited }) {
-  const note = limited ? ' • лимит разборов ИИ на час исчерпан, упрощённый разбор'
+export function resultEmbed({ title, url, typeLabel, text, ai, cached, limited, noAccess }) {
+  const note = noAccess ? ' • упрощённый разбор: нет доступа к ИИ' : limited ? ' • лимит разборов ИИ на час исчерпан, упрощённый разбор'
     : !ai ? ' • упрощённый разбор без ИИ' : cached ? ' • сохранённый разбор' : '';
-  return new EmbedBuilder().setColor(C.details)
+  // в «Проверке» найдены расхождения — карточка жёлтая
+  const flagged = /^Проверка:\s*\n(?!1\.\s*(?:Явных р|Р)асхождений)/m.test(String(text).replace(/\*\*/g, ''));
+  return new EmbedBuilder().setColor(flagged ? C.warn : C.details)
     .setTitle(clip(`📄 ${typeLabel}${title ? ` — ${title}` : ''}`, 256))
     .setURL(url)
     .setDescription(formatResult(text))
     .setFooter({ text: stamp() + note });
 }
 
-/* ---------- кто может пользоваться ---------- */
+/* ---------- кто может пользоваться ИИ ---------- */
+/**
+ * Право «Разбор документов (ИИ)» в /settings → Доступ. Пока оно никому не выдано — ИИ доступен всем
+ * сотрудникам прокуратуры и судьям (как раньше); выдали хотя бы одной роли или человеку — только им.
+ * Полный доступ, владелец сервера и владелец бота — всегда.
+ */
 const STAFF = ['full', 'setup', 'staff', 'monitor', 'approve', 'assign', 'senior', 'prosecutor', 'case_register', 'judge', 'mentoring'];
-/** В ЛС ролей нет — ищем человека на серверах бота */
-async function staffAnywhere(client, userId) {
-  if (trustedUsers.has(userId)) return true;
+const aiPerms = () => (hasRulesFor('ai') ? ['ai', 'full'] : STAFF);
+
+/** Может ли автор нажатия/команды пользоваться ИИ. В ЛС ролей нет — ищем человека на серверах бота. */
+export async function mayUseAI(client, i) {
+  if (i.inGuild()) return aiPerms().some((p) => can(i, p));
+  if (trustedUsers.has(i.user.id)) return true;
   for (const g of client.guilds.cache.values()) {
-    if (g.ownerId === userId) return true;
-    const m = await g.members.fetch(userId).catch(() => null);
-    if (m && STAFF.some((p) => memberHas(m, p))) return true;
+    if (g.ownerId === i.user.id) return true;
+    const m = await g.members.fetch(i.user.id).catch(() => null);
+    if (m && aiPerms().some((p) => memberHas(m, p))) return true;
   }
   return false;
 }
@@ -492,34 +639,31 @@ function allow(userId) {
   return true;
 }
 
-const closeRow = () => new ActionRowBuilder().addComponents(
-  new ButtonBuilder().setCustomId('doc:close').setLabel('Закрыть').setStyle(ButtonStyle.Secondary));
-
 /* ---------- /analyze ---------- */
+/** Ответ виден только автору (и на сервере, и в ЛС), убрать — «Нажмите здесь, чтобы убрать его» от Discord */
 export async function analyze(client, i) {
-  const dm = !i.inGuild();
-  const ok = dm ? await staffAnywhere(client, i.user.id) : STAFF.some((p) => can(i, p));
-  if (!ok) return i.reply({ content: '❌ Разбор документов доступен только сотрудникам прокуратуры и судьям.', plain: true, ...(dm ? {} : EPH) });
+  if (!await mayUseAI(client, i)) {
+    return i.reply({ content: '❌ Нет доступа к разбору документов. Его выдаёт руководство: `/settings` → Доступ → «Разбор документов (ИИ)».', plain: true, ...EPH });
+  }
   const url = i.options.getString('url');
   const type = Object.hasOwn(TYPES, i.options.getString('type')) ? i.options.getString('type') : 'other';
   const id = docId(url);
-  if (!id) return i.reply({ content: '⚠️ Нужна ссылка на Google Документ вида https://docs.google.com/document/d/…', ...(dm ? {} : EPH) });
-  await i.deferReply(dm ? {} : EPH);
-  const done = (p) => i.editReply({ ...p, components: dm ? [] : [closeRow()] });
+  if (!id) return i.reply({ content: '⚠️ Нужна ссылка на Google Документ вида https://docs.google.com/document/d/…', ...EPH });
+  await i.deferReply(EPH);
   let text;
   try {
     text = await fetchDoc(id);
   } catch (e) {
-    return done({ content: `⚠️ ${e instanceof DocError ? e.message : 'Не удалось открыть документ.'}` });
+    return i.editReply({ content: `⚠️ ${e instanceof DocError ? e.message : 'Не удалось открыть документ.'}` });
   }
   const r = await analyzeText(text, type, i.user.id);
-  return done({
+  return i.editReply({
     embeds: [resultEmbed({ title: docTitle(text), url: `https://docs.google.com/document/d/${id}`, typeLabel: TYPES[type].label, ...r })],
     __noLogo: true,
   });
 }
 
-/** Кнопка «Закрыть» под ответом на сервере */
+/** Кнопка «Закрыть» на старых ответах /analyze (до перехода на «только вам видно») */
 export async function handleDoc(client, i) {
   if (i.customId !== 'doc:close') return;
   await i.deferUpdate();

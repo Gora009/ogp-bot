@@ -26,6 +26,7 @@ export const PERMS = {
   senior: ['Старший состав', 'получает жалобы на руководство и сотрудников офиса, принимает решения по уголовным делам (СГП, ЗГП, ГП)'],
   case_register: ['Регистрация дел', 'кнопка «Зарегистрировать дело» на панели и /register_case'],
   mentoring: ['Кураторство', 'добавлять кураторов через панель, продлевать сроки, отказ за куратора, /curators'],
+  ai: ['Разбор документов (ИИ)', '/analyze и «Краткое содержание» в жалобах. Пока никому не выдано — пользуются все сотрудники прокуратуры и судьи'],
   mentoring_text: ['Текст инструкции кураторства', 'изменять текст, который показывает кнопка «Инструкция» (обычно Генеральный прокурор)'],
 };
 
@@ -205,7 +206,7 @@ const listEmbed = () => new EmbedBuilder().setColor(COLOR).setTitle('🔐 Дос
 /* ---------- /access panel: список прав, у каждого ➕; внутри — роли с ✖ ---------- */
 const PERM_EMOJI = {
   full: '👑', setup: '🔧', staff: '👥', monitor: '⏰', approve: '✅', assign: '📝', judge: '⚖️',
-  prosecutor: '👤', senior: '⭐', case_register: '📂', mentoring: '🎓', mentoring_text: '📖',
+  prosecutor: '👤', senior: '⭐', case_register: '📂', mentoring: '🎓', mentoring_text: '📖', ai: '🤖',
 };
 const LOGO = 'attachment://logo.webp';
 const LOGO_FILE = fileURLToPath(new URL('../assets/logo.webp', import.meta.url));

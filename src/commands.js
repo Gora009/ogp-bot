@@ -3,6 +3,15 @@ import { PERMS } from './access.js';
 
 const str = (name, description, required = true, extra = {}) => ({ name, description, type: O.String, required, ...extra });
 
+/** Панели /setup: [тип, название]. Встроенный список Discord — открывается мгновенно, без запроса к боту */
+export const SETUP_PANELS = [
+  ['complaints', 'Жалобы'], ['cases', 'Уголовные дела'], ['case_review', 'Дела на проверку'],
+  ['vacations', 'Отпуска и увольнения'], ['cases_gov', 'Дела (Правительство)'], ['mentoring', 'Кураторство'],
+  ['overdue', 'Просроченные дедлайны'], ['dm_blocked', 'Закрытые ЛС'], ['gform', 'Google Форма (ответы в канал)'],
+  ['all', 'Все панели (Прокуратура)'],
+];
+const panelChoices = SETUP_PANELS.map(([value, name]) => ({ name, value }));
+
 const permChoices = Object.entries(PERMS).map(([value, [name]]) => ({ name, value }));
 const target = [
   { name: 'role', description: 'Роль', type: O.Role, required: false },
@@ -22,8 +31,13 @@ const list = [
   {
     name: 'setup', description: 'Настройка панелей бота',
     options: [
-      str('panel', 'Панель (несколько — через «;», например: Жалобы; Кураторство)', true, { autocomplete: true, max_length: 200 }),
+      str('panel', 'Панель', true, { choices: panelChoices }),
       { name: 'channel', description: 'Канал для панели', type: O.Channel, channel_types: [ChannelType.GuildText], required: true },
+      // ещё панели — каждая со своим каналом (без канала — в основной)
+      ...[2, 3, 4, 5].flatMap((n) => [
+        str(`panel${n}`, 'Ещё панель', false, { choices: panelChoices }),
+        { name: `channel${n}`, description: `Канал для panel${n} (не указан — основной канал)`, type: O.Channel, channel_types: [ChannelType.GuildText], required: false },
+      ]),
     ],
   },
   { name: 'panels_list', description: 'Показать все зарегистрированные панели' },

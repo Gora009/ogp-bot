@@ -1,10 +1,10 @@
 import {
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ModalBuilder, StringSelectMenuBuilder,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, ModalBuilder, StringSelectMenuBuilder,
   TextInputBuilder, TextInputStyle,
 } from 'discord.js';
 import { db, getSetting, setSetting } from './db.js';
 import { applicantFromTitle, fetchComplaintDetails, fetchFirstPost, fetchPage, fetchThreads, uniqueThreads } from './forum.js';
-import { analyzeText, resultEmbed } from './analyze.js';
+import { analyzeText, mayUseAI, resultEmbed } from './analyze.js';
 import { can, isLeader, isSenior, refreshSeniorFlags, roleIdsWith } from './access.js';
 import { accusedIds, isRestricted } from './restricted.js';
 import { conf } from './config.js';
@@ -364,18 +364,23 @@ async function handleComplaint(client, i) {
   // --- инфо и продление дедлайнов ---
   if (action === 'inf') {
     const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`c:det:${c.thread_id}`).setLabel('Подробно').setEmoji('📄').setStyle(ButtonStyle.Secondary));
+      new ButtonBuilder().setCustomId(`c:det:${c.thread_id}`).setLabel('Краткое содержание').setEmoji('📄').setStyle(ButtonStyle.Secondary));
     return i.reply({ embeds: [infoEmbed(c)], components: [row], ...EPH });
   }
-  // «Подробно»: суть жалобы и требования заявителя из первого сообщения темы
+  // «Краткое содержание»: суть жалобы и требования заявителя из первого сообщения темы.
+  // Дописывается в то же сообщение «Инфо» (под сообщением бота), а не отдельным ответом.
   if (action === 'det') {
-    await i.deferReply(EPH);
+    const inPlace = i.message?.flags?.has?.(MessageFlags.Ephemeral);
+    await (inPlace ? i.deferUpdate() : i.deferReply(EPH));
+    const info = EmbedBuilder.from(infoEmbed(c).toJSON()).setThumbnail('attachment://logo.webp');
     const text = await fetchFirstPost(c.url).catch(() => null);
-    if (!text) return i.editReply({ content: '⚠️ Не удалось открыть тему жалобы на форуме. Попробуйте позже.' });
-    const r = await analyzeText(text, 'complaint', i.user.id);
-    return i.editReply({
-      embeds: [resultEmbed({ title: `Жалоба №${c.number ?? '—'}`, url: c.url, typeLabel: 'Подробно', ...r })], __noLogo: true,
-    });
+    if (!text) {
+      return inPlace ? i.followUp({ content: '⚠️ Не удалось открыть тему жалобы на форуме. Попробуйте позже.', ...EPH })
+        : i.editReply({ content: '⚠️ Не удалось открыть тему жалобы на форуме. Попробуйте позже.' });
+    }
+    const r = await analyzeText(text, 'complaint', i.user.id, { paid: await mayUseAI(client, i) });
+    const summary = resultEmbed({ title: `Жалоба №${c.number ?? '—'}`, url: c.url, typeLabel: 'Краткое содержание', ...r });
+    return i.editReply({ embeds: inPlace ? [info, summary] : [summary], components: [], __noLogo: true });
   }
   if (action === 'xr' || action === 'xc') {
     if (!canControl(i)) return i.reply({ content: '⛔ Продлевать дедлайны может руководство.', ...EPH });

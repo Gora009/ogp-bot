@@ -7,7 +7,7 @@ import { caseRegisterPanelPayload, requestPanelPayload } from './cases.js';
 import { mentoringPanelPayload, refreshOpenMentorships } from './mentoring.js';
 import { DEFAULT_KEYWORDS, getKeywords, setKeywords } from './restricted.js';
 import { vacationsPanelPayload } from './vacations.js';
-import { commands } from './commands.js';
+import { SETUP_PANELS, commands } from './commands.js';
 import { analyzeCommand } from './analyze.js';
 import { syncPeople } from './people.js';
 import { conf } from './config.js';
@@ -69,13 +69,7 @@ export async function refreshPanels(client) {
 /** Какое право нужно, чтобы пользоваться панелью (выдаётся в /settings → Доступ) */
 const PANEL_ROLE_PERM = { complaints: 'assign', cases: 'case_register', mentoring: 'mentoring', overdue: 'monitor' };
 
-/** Панели для /setup: [значение, название]. Несколько — через «;»: «Жалобы; Кураторство» */
-export const SETUP_PANELS = [
-  ['complaints', 'Жалобы'], ['cases', 'Уголовные дела'], ['case_review', 'Дела на проверку'],
-  ['vacations', 'Отпуска и увольнения'], ['cases_gov', 'Дела (Правительство)'], ['mentoring', 'Кураторство'],
-  ['overdue', 'Просроченные дедлайны'], ['dm_blocked', 'Закрытые ЛС'], ['gform', 'Google Форма (ответы в канал)'],
-  ['all', 'Все панели (Прокуратура)'],
-];
+/** «Все панели (Прокуратура)» — набор основных панелей */
 const ALL = ['complaints', 'cases', 'cases_gov', 'vacations', 'mentoring'];
 const panelName = (v) => SETUP_PANELS.find(([k]) => k === v)?.[1] ?? v;
 /** «жалобы; кураторство» → ['complaints', 'mentoring']; нераспознанные — в bad */
@@ -92,31 +86,29 @@ function parsePanels(text) {
   return { want, bad };
 }
 
-/** Подсказки при вводе: можно выбрать несколько панелей подряд через «;» */
-export async function setupAutocomplete(i) {
-  const text = i.options.getFocused();
-  const parts = text.split(';');
-  const typed = parts.pop().trim().toLowerCase();
-  const chosen = parts.map((x) => x.trim()).filter(Boolean);
-  const prefix = chosen.length ? `${chosen.join('; ')}; ` : '';
-  const taken = new Set(chosen.map((x) => x.toLowerCase()));
-  const options = SETUP_PANELS.filter(([, n]) => !taken.has(n.toLowerCase()) && n.toLowerCase().includes(typed))
-    .map(([, n]) => ({ name: `${prefix}${n}`.slice(0, 100), value: `${prefix}${n}`.slice(0, 100) }));
-  return i.respond(options.slice(0, 25)).catch(() => {});
-}
-
 export async function setup(client, i) {
-  const { want, bad } = parsePanels(i.options.getString('panel'));
-  const ch = i.options.getChannel('channel');
+  // пары «панель — канал»: panel+channel обязательны, panel2+channel2 … panel5+channel5 — по желанию
+  // (не указан channelN — панель ставится в основной канал)
+  const main = i.options.getChannel('channel');
+  const pairs = [];
+  const bad = [];
+  for (const n of ['', '2', '3', '4', '5']) {
+    const value = i.options.getString(`panel${n}`);
+    if (!value) continue;
+    const parsed = parsePanels(value);
+    bad.push(...parsed.bad);
+    const chan = i.options.getChannel(`channel${n}`) ?? main;
+    for (const t of parsed.want) if (!pairs.some(([x]) => x === t)) pairs.push([t, chan]);
+  }
   await i.deferReply(EPH);
   // Google Форма — не панель с кнопками: присылаем скрипт и кнопку подключения
-  if (want.length === 1 && want[0] === 'gform') return i.editReply(formSetupReply(ch.id));
+  if (pairs.length === 1 && pairs[0][0] === 'gform') return i.editReply(formSetupReply(pairs[0][1].id));
   const done = []; // [название, где что] — поля карточки
   const notes = [];
-  const gid = ch.guildId;
+  const gid = main.guildId;
 
   // всё, что относится к панели (карточки, заявки), приходит в тот же канал
-  for (const panel of want) {
+  for (const [panel, ch] of pairs) {
     if (panel === 'complaints') {
       await putPanel(client, 'complaints', ch.id);
       done.push(['📝 Жалобы', `Новые жалобы → <#${ch.id}>`]);
@@ -162,7 +154,7 @@ export async function setup(client, i) {
         `Добавить роль: \`/settings\` → Доступ → «${PERMS[perm][0]}».`);
     }
   }
-  if (want.includes('gform')) notes.push('Google Форма подключается отдельной командой: `/setup panel:Google Форма`.');
+  if (pairs.some(([t]) => t === 'gform')) notes.push('Google Форма подключается отдельной командой: `/setup panel:Google Форма`.');
   if (bad.length) notes.push(`Не понял: ${bad.map((x) => `«${x}»`).join(', ')}. Выберите панели из подсказок.`);
   if (!done.length) return i.editReply(notes.join('\n\n') || 'Не выбрано ни одной панели.');
 

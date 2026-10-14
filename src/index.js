@@ -86,8 +86,7 @@ async function route(client, i) {
   // роли пользователя известны из самого взаимодействия: прокурор попадает в базу сам, флаг «старший состав» актуален
   syncProsecutorRecord(i.member);
 
-  // подсказки при вводе: /setup panel (несколько панелей через «;»)
-  if (i.isAutocomplete()) return i.commandName === 'setup' ? admin.setupAutocomplete(i) : i.respond([]).catch(() => {});
+  if (i.isAutocomplete()) return i.respond([]).catch(() => {});
   if (i.isChatInputCommand()) {
     const need = COMMAND_PERMS[i.commandName];
     if (need && !can(i, need)) return i.reply({ content: denyText(i.commandName, need), plain: true, ...EPH });
