@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import * as cheerio from 'cheerio';
 import { ApplicationCommandOptionType as O, EmbedBuilder } from 'discord.js';
 import { can, hasRulesFor, memberHas, trustedUsers } from './access.js';
-import { C, EPH, nowTs, safeText, stamp } from './util.js';
+import { C, EPH, nowTs, safeText } from './util.js';
 import { db } from './db.js';
 import { fetchPost, forumThreadUrl } from './forum.js';
 
@@ -186,11 +186,22 @@ export function htmlToText(html, base, { marks = false } = {}) {
     const s = $(el);
     const css = `${(s.attr('class') ?? '').split(/\s+/).map((c) => styles[c] ?? '').join(';')};${s.attr('style') ?? ''}`;
     const text = s.text();
-    if (!text.trim()) return;
+    if (!/[^\s​-‍﻿]/.test(text)) return; // пусто или только невидимые символы
     const fg = colorKind(cssProp(css, 'color'));
     const bg = colorKind(cssProp(css, 'background-color'));
     const size = parseFloat(cssProp(css, 'font-size'));
-    if ((fg === 'white' && (!bg || bg === 'white')) || (size > 0 && size < 4)) {
+    // белый текст скрыт, только если под ним нет тёмного/цветного фона — ни у самого текста, ни у абзаца или
+    // ячейки таблицы вокруг (белый на #262626 — обычное оформление, не скрытый текст)
+    const backdrop = () => {
+      for (let node = s; node.length && !node.is('body'); node = node.parent()) {
+        const own = `${(node.attr('class') ?? '').split(/\s+/).map((c) => styles[c] ?? '').join(';')};${node.attr('style') ?? ''}`;
+        const v = cssProp(own, 'background-color');
+        if (v && !/transparent|inherit|initial/i.test(v)) return v;
+      }
+      return '';
+    };
+    const whiteOnWhite = fg === 'white' && (() => { const b = backdrop(); return !b || colorKind(b) === 'white'; })();
+    if (whiteOnWhite || (size > 0 && size < 4)) {
       hidden.push(text.trim());
       s.remove();
       return;
@@ -679,7 +690,7 @@ export function heuristic(withLinks, type) {
  */
 db.exec(`CREATE TABLE IF NOT EXISTS ai_cache (key TEXT PRIMARY KEY, result TEXT NOT NULL, created_ts INTEGER NOT NULL)`);
 const KEEP_DAYS = 180;
-const cacheKey = (text, type) => `v8:${type}:${createHash('sha256').update(text.replace(/\s+/g, ' ').trim()).digest('hex')}`;
+const cacheKey = (text, type) => `v9:${type}:${createHash('sha256').update(text.replace(/\s+/g, ' ').trim()).digest('hex')}`;
 const fromCache = (key) => db.prepare('SELECT result FROM ai_cache WHERE key=?').get(key)?.result ?? null;
 function toCache(key, result) {
   db.prepare('INSERT OR REPLACE INTO ai_cache(key,result,created_ts) VALUES(?,?,?)').run(key, result, nowTs());
@@ -704,7 +715,10 @@ export async function analyzeText(text, type, userId = null, { paid = true } = {
   const job = (async () => {
     try {
       const raw = await viaAI(text, type);
-      const result = raw && type === 'case' ? mergeChecks(verifyChecks(ensureAccused(raw, text), text), caseChecks(text)) : raw;
+      const result = !raw ? raw
+        : type === 'case' ? mergeChecks(verifyChecks(ensureAccused(raw, text), text), caseChecks(text))
+          // правка действующих норм (есть «Было/Стало») — это «Изменения», а не «Основные положения»
+          : type === 'bill' && /^Было\s*:/m.test(raw) ? raw.replace(/^Основные положения\s*:/m, 'Изменения:') : raw;
       if (result) { toCache(key, result); return { text: result, ai: true }; }
     } catch (e) {
       console.error('analyze (AI):', e?.status ?? '', e?.message);
@@ -757,15 +771,17 @@ function linkify(s) {
 }
 
 export function resultEmbed({ title, url, typeLabel, text, ai, cached, limited, noAccess, warnings = [] }) {
-  const note = noAccess ? ' • упрощённый разбор: нет доступа к ИИ' : limited ? ' • лимит разборов ИИ на час исчерпан, упрощённый разбор'
-    : !ai ? ' • упрощённый разбор без ИИ' : cached ? ' • сохранённый разбор' : '';
+  // без колонтитула: пометка о способе разбора — мелкой строкой в конце текста, дата не нужна
+  const note = noAccess ? 'Упрощённый разбор: нет доступа к ИИ' : limited ? 'Лимит разборов ИИ на час исчерпан — упрощённый разбор'
+    : !ai ? 'Упрощённый разбор без ИИ' : cached ? 'Сохранённый разбор' : '';
   // в «Проверке» найдены расхождения — карточка жёлтая
   const flagged = /^Проверка:\s*\n(?!1\.\s*(?:Явных р|Р)асхождений)/m.test(String(text).replace(/\*\*/g, ''));
+  const head = warnings.length ? `${warnings.map((w) => `⚠️ ${safeText(w)}`).join('\n')}\n\n` : '';
+  const tail = note ? `\n\n-# ${note}` : '';
   return new EmbedBuilder().setColor(flagged ? C.warn : C.details)
     .setTitle(clip(`📄 ${typeLabel}${title ? ` — ${title}` : ''}`, 256))
     .setURL(url)
-    .setDescription(((warnings.length ? `${warnings.map((w) => `⚠️ ${safeText(w)}`).join('\n')}\n\n` : '') + formatResult(text)).slice(0, 4096))
-    .setFooter({ text: stamp() + note });
+    .setDescription(head + formatResult(text).slice(0, 4096 - head.length - tail.length) + tail);
 }
 
 /* ---------- кто может пользоваться ИИ ---------- */

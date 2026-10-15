@@ -1,13 +1,13 @@
 import {
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, GatewayIntentBits, ModalBuilder, RoleSelectMenuBuilder,
-  StringSelectMenuBuilder, TextInputBuilder, TextInputStyle, UserSelectMenuBuilder,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, ContainerBuilder, GatewayIntentBits, MessageFlags, ModalBuilder, RoleSelectMenuBuilder,
+  SeparatorBuilder, StringSelectMenuBuilder, TextDisplayBuilder, TextInputBuilder, TextInputStyle, UserSelectMenuBuilder,
 } from 'discord.js';
 import { db, getSetting, setSetting } from './db.js';
 import { PERMS, can, hasAnyRules, notifyAccessChange, roleIdsWith, setRolesFor, userIdsWith } from './access.js';
 import { getKeywords, setKeywords } from './restricted.js';
 import { autoAssignText, conf, setConf } from './config.js';
 import { FORUM_URL, registerCommands } from './admin.js';
-import { C, EPH, stamp } from './util.js';
+import { C, EPH } from './util.js';
 import { deleteForm, formLine, listForms } from './forms.js';
 import { allowGuild, disallowGuild, leaveIfForeign, storedGuilds } from './guard.js';
 import { autosetup } from './autosetup.js';
@@ -24,8 +24,41 @@ const POLL = Math.max(10, Number(process.env.POLL_SECONDS || 30));
 
 const PAGES = [[['main', 'Общее'], ['access', 'Доступ'], ['complaints', 'Жалобы'], ['staff', 'Сотрудники'], ['system', 'Система']]];
 
-const section = (title, subtitle, body) => new EmbedBuilder().setColor(C.info).setTitle(`Настройки бота — ${title}`)
-  .setDescription(`**${subtitle}**\n\n${LINE}\n\n${body.join('\n')}`).setFooter({ text: stamp() });
+const V2 = MessageFlags.IsComponentsV2;
+/** «Срок закрытия: 72 ч» → «**Срок закрытия:** 72 ч» (короткая подпись без разметки) */
+const label = (l) => {
+  const m = /^([А-ЯЁA-Z][^:*`<>\n]{1,40}):\s+(.+)$/.exec(l);
+  return m ? `**${m[1]}:** ${m[2]}` : l;
+};
+/**
+ * Раздел настроек: сверху «Настройки бота» и название раздела, дальше блоки — строка «**Заголовок**» в body
+ * начинает новый блок (## Заголовок), между блоками — разделители. Как карточки на скрине «database.gov».
+ */
+function section(title, subtitle, body) {
+  const c = new ContainerBuilder().setAccentColor(C.info)
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent(`**⚙️ Настройки бота**\n# ${title}\n-# ${subtitle}`));
+  const blocks = [];
+  let cur = null;
+  for (const line of body) {
+    const h = /^\*\*([^*]+)\*\*$/.exec(line.trim());
+    if (h || line === LINE) { cur = { head: h ? h[1] : null, lines: [] }; blocks.push(cur); continue; }
+    if (!cur) { cur = { head: null, lines: [] }; blocks.push(cur); }
+    cur.lines.push(line);
+  }
+  for (const b of blocks) {
+    const lines = b.lines.join('\n').trim().split('\n').filter((l, n, all) => l.trim() || all.length > 1);
+    if (!b.head && !lines.join('').trim()) continue;
+    c.addSeparatorComponents(new SeparatorBuilder());
+    c.addTextDisplayComponents(new TextDisplayBuilder().setContent([...(b.head ? [`## ${b.head}`] : []), ...lines.map(label)].join('\n')));
+  }
+  return c;
+}
+/** Кнопки и списки — внутри той же карточки, под чертой */
+const page = (container, rows) => {
+  container.addSeparatorComponents(new SeparatorBuilder());
+  for (const r of rows) container.addActionRowComponents(r);
+  return { components: [container], flags: V2 };
+};
 
 const nav = (page) => PAGES.map((line) => new ActionRowBuilder().addComponents(line.map(([k, label]) =>
   new ButtonBuilder().setCustomId(`set:p:${k}`).setLabel(label)
@@ -43,8 +76,7 @@ const note = (text) => (text ? ['', `> ${text}`] : []);
 function mainView(client, msg) {
   const pros = db.prepare('SELECT COUNT(*) n, SUM(senior) s FROM prosecutors').get();
   const vr = conf.vacationRoleId();
-  return {
-    embeds: [section('Общее', 'Сводка всех настроек. Разделы — кнопками ниже.', [
+  return page(section('Общее', 'Сводка всех настроек. Разделы — кнопками ниже.', [
       '**Жалобы**',
       `Назначение: ${autoAssignText()}`,
       `Срок закрытия: ${conf.deadlineHours()} ч от подачи на форуме`,
@@ -63,9 +95,7 @@ function mainView(client, msg) {
       '',
       '-# «Автонастройка по ролям» сама выдаст права ролям по их названиям (ГП, ЗГП, СГП, Прокурор, Судья, Отпуск) — сначала покажет план.',
       ...note(msg),
-    ])],
-    components: [...nav('main'), row(btn('set:auto', 'Автонастройка по ролям', ButtonStyle.Primary), btn('set:faq', 'Справка'))],
-  };
+    ]), [...nav('main'), row(btn('set:auto', 'Автонастройка по ролям', ButtonStyle.Primary), btn('set:faq', 'Справка'))]);
 }
 
 function accessView(perm = 'prosecutor', msg = '') {
@@ -79,8 +109,7 @@ function accessView(perm = 'prosecutor', msg = '') {
   const userSel = new UserSelectMenuBuilder().setCustomId(`set:au:${perm}`).setPlaceholder('Отдельные пользователи с этим правом')
     .setMinValues(0).setMaxValues(25);
   if (users.length) userSel.setDefaultUsers(users.slice(0, 25));
-  return {
-    embeds: [section('Доступ', 'Кто что может в боте', [
+  return page(section('Доступ', 'Кто что может в боте', [
       ...lines,
       LINE,
       '',
@@ -90,15 +119,13 @@ function accessView(perm = 'prosecutor', msg = '') {
       'Выберите право в первом списке. Во втором и третьем отметьте роли и людей: отмеченные получат право, ' +
         'снятая отметка его заберёт.',
       ...note(msg),
-    ])],
-    components: [
+    ]), [
       ...nav('access'),
       row(new StringSelectMenuBuilder().setCustomId('set:perm').setPlaceholder('Право')
         .addOptions(Object.entries(PERMS).map(([k, [n]]) => ({ label: n, value: k, default: k === perm })))),
       row(roleSel),
       row(userSel),
-    ],
-  };
+    ]);
 }
 
 function complaintsView(msg = '') {
@@ -108,8 +135,7 @@ function complaintsView(msg = '') {
   const sel = new UserSelectMenuBuilder().setCustomId('set:resp').setPlaceholder('Ответственные за дедлайны')
     .setMinValues(0).setMaxValues(25);
   if (resp.length) sel.setDefaultUsers(resp.slice(0, 25));
-  return {
-    embeds: [section('Жалобы', 'Назначение, сроки и жалобы на руководство', [
+  return page(section('Жалобы', 'Назначение, сроки и жалобы на руководство', [
       '**Назначение**',
       autoAssignText(),
       '',
@@ -125,13 +151,11 @@ function complaintsView(msg = '') {
       '**Ответственные за дедлайны**',
       `${resp.map((u) => `<@${u}>`).join(' ') || 'не назначены'} — упоминаются в канале просрочек и могут продлевать сроки`,
       ...note(msg),
-    ])],
-    components: [
+    ]), [
       ...nav('complaints'),
       row(btn('set:m:times', 'Сроки и назначение'), btn('set:m:kw', 'Слова для жалоб на руководство'), btn('set:poll', 'Проверить форум сейчас')),
       row(sel),
-    ],
-  };
+    ]);
 }
 
 function staffView(msg = '') {
@@ -141,8 +165,7 @@ function staffView(msg = '') {
   const judges = db.prepare('SELECT COUNT(*) n FROM judges').get().n;
   const roleSel = new RoleSelectMenuBuilder().setCustomId('set:vr').setPlaceholder('Роль «Отпуск»').setMinValues(0).setMaxValues(1);
   if (vr) roleSel.setDefaultRoles(vr);
-  return {
-    embeds: [section('Сотрудники', 'Отпуска, кураторство и базы сотрудников', [
+  return page(section('Сотрудники', 'Отпуска, кураторство и базы сотрудников', [
       '**Роль «Отпуск»**',
       `${vr ? `<@&${vr}>` : 'не задана'} — выдаётся в день начала отпуска и снимается после него. ` +
         'Роль бота должна стоять выше неё.',
@@ -154,13 +177,11 @@ function staffView(msg = '') {
       `Прокуроров: ${pros.n} (старший состав: ${pros.s ?? 0}), судей: ${judges}`,
       'Бот ведёт их сам по ролям — права ролям выдаются в разделе «Доступ».',
       ...note(msg),
-    ])],
-    components: [
+    ]), [
       ...nav('staff'),
       row(roleSel),
       row(btn('set:m:instr', 'Изменить инструкцию кураторства'), btn('set:sync', 'Сверить базы сейчас')),
-    ],
-  };
+    ]);
 }
 
 function systemView(client, msg = '') {
@@ -168,8 +189,7 @@ function systemView(client, msg = '') {
   const forms = listForms();
   const pg = conf.prosecutionGuildId();
   const pgName = pg ? client.guilds.cache.get(pg)?.name : null;
-  return {
-    embeds: [section('Система', 'Команды, серверы бота и форум', [
+  return page(section('Система', 'Команды, серверы бота и форум', [
       '**Серверы бота**',
       ...storedGuilds().map((id) => `• ${client.guilds.cache.get(id)?.name ?? 'бот ещё не добавлен'} (${id})`),
       'На любом другом сервере бот сразу выходит. Чтобы добавить второй сервер, сначала разрешите его здесь.',
@@ -193,8 +213,7 @@ function systemView(client, msg = '') {
       '**Google Формы**',
       ...(forms.length ? forms.map(formLine) : ['не подключены — подключаются через `/setup`']),
       ...note(msg),
-    ])],
-    components: [
+    ]), [
       ...nav('system'),
       row(btn('set:scope', global ? 'Сделать команды серверными' : 'Сделать команды глобальными'),
         btn('set:m:pg', 'Сервер Прокуратуры'), btn('set:m:guild', 'Разрешить сервер')),
@@ -202,8 +221,7 @@ function systemView(client, msg = '') {
         .addOptions(storedGuilds().slice(0, 25).map((id) => ({ label: (client.guilds.cache.get(id)?.name ?? id).slice(0, 100), value: id, description: id }))))] : []),
       ...(forms.length ? [row(new StringSelectMenuBuilder().setCustomId('set:fdel').setPlaceholder('Отключить Google Форму')
         .addOptions(forms.slice(0, 25).map((f) => ({ label: f.name.slice(0, 100), value: String(f.id) }))))] : []),
-    ],
-  };
+    ]);
 }
 
 const view = (client, page, msg) => ({
@@ -280,7 +298,7 @@ function submitModal(i, kind) {
 }
 
 /* ---------- вход и роутер ---------- */
-export const settings = (client, i) => i.reply({ ...mainView(client), ...EPH });
+export const settings = (client, i) => i.reply({ ...mainView(client), flags: V2 | MessageFlags.Ephemeral });
 
 export async function handleSettings(client, i) {
   if (!can(i, 'setup')) return i.reply({ content: '⛔ Настройки доступны руководству (право «Настройка панелей»).', ...EPH });
