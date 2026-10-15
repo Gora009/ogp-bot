@@ -299,8 +299,9 @@ async function submitRequest(client, i) {
   const dup = db.prepare(`SELECT 1 FROM case_requests WHERE uin=? AND requester_id=? AND status='pending'`)
     .get(c.uin, i.user.id);
   if (dup) return i.reply({ content: 'Ваш запрос уже на рассмотрении.', ...EPH });
-  const reviewChannels = destinations('case_review');
-  if (!reviewChannels.length) return i.reply({ content: 'Канал проверки дел не настроен.', ...EPH });
+  // свой канал «Запросы дел»; не выбран — в «Дела на проверку», как раньше
+  const reviewChannels = destinations('case_req_cards', 'case_review');
+  if (!reviewChannels.length) return i.reply({ content: 'Канал для запросов дел не настроен.', ...EPH });
 
   const r = db.prepare('INSERT INTO case_requests(uin,requester_id,created_ts) VALUES(?,?,?)')
     .run(c.uin, i.user.id, nowTs());

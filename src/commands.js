@@ -5,7 +5,7 @@ const str = (name, description, required = true, extra = {}) => ({ name, descrip
 
 /** Панели /setup: [тип, название]. Встроенный список Discord — открывается мгновенно, без запроса к боту */
 export const SETUP_PANELS = [
-  ['complaints', 'Жалобы'], ['cases', 'Уголовные дела'], ['case_review', 'Дела на проверку'],
+  ['complaints', 'Жалобы'], ['cases', 'Уголовные дела'], ['case_review', 'Дела на проверку'], ['case_req_cards', 'Запросы дел'],
   ['vacations', 'Отпуска и увольнения'], ['cases_gov', 'Дела (Правительство)'], ['mentoring', 'Кураторство'],
   ['overdue', 'Просроченные дедлайны'], ['dm_blocked', 'Закрытые ЛС'], ['gform', 'Google Форма (ответы в канал)'],
   ['all', 'Все панели (Прокуратура)'],
@@ -13,7 +13,7 @@ export const SETUP_PANELS = [
 /** Типы записей панелей для /panel_delete */
 const PANEL_TYPES = [
   ['complaints', 'Жалобы'], ['case_register', 'Уголовные дела (регистрация)'], ['case_review', 'Дела на проверку'],
-  ['case_request', 'Дела (Правительство)'], ['vacations', 'Отпуска и увольнения'], ['requests', 'Заявки руководству'],
+  ['case_req_cards', 'Запросы дел'], ['case_request', 'Дела (Правительство)'], ['vacations', 'Отпуска и увольнения'], ['requests', 'Заявки руководству'],
   ['mentoring', 'Кураторство'], ['mentoring_cards', 'Кураторство (карточки)'], ['overdue', 'Просроченные дедлайны'], ['dm_blocked', 'Закрытые ЛС'],
 ].map(([value, name]) => ({ name, value }));
 const panelChoices = SETUP_PANELS.map(([value, name]) => ({ name, value }));

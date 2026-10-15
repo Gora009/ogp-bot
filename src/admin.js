@@ -21,7 +21,7 @@ const embed = (title, desc) => new EmbedBuilder().setColor(COLOR).setTitle(title
 const reply = (i, title, desc) => i.reply({ embeds: [embed(title, desc.slice(0, 4000))], ...EPH });
 
 export const PANEL_NAMES = {
-  complaints: 'Жалобы', case_register: 'Уголовные дела (регистрация)', case_review: 'Дела на проверку',
+  complaints: 'Жалобы', case_register: 'Уголовные дела (регистрация)', case_review: 'Дела на проверку', case_req_cards: 'Запросы дел',
   case_request: 'Дела (Правительство)', vacations: 'Отпуска и увольнения', requests: 'Заявки руководству (отпуска/увольнения)',
   mentoring: 'Кураторство', mentoring_cards: 'Кураторство (карточки)', overdue: 'Просроченные дедлайны', dm_blocked: 'Закрытые ЛС',
 };
@@ -114,7 +114,12 @@ export async function setup(client, i) {
     }
     if (panel === 'case_review') {
       await putPanel(client, 'case_review', ch.id);
-      done.push(['⚖️ Дела на проверку', `Карточки новых дел и запросов дел → <#${ch.id}>`]);
+      done.push(['⚖️ Дела на проверку', `Карточки новых дел → <#${ch.id}>` +
+        (panelIn('case_req_cards', gid) ? '' : '\nЗапросы дел — тоже сюда, пока не выбран отдельный канал: `/setup panel:Запросы дел`')]);
+    }
+    if (panel === 'case_req_cards') {
+      await putPanel(client, 'case_req_cards', ch.id);
+      done.push(['📨 Запросы дел', `Запросы доступа к делам (одобрить / отклонить) → <#${ch.id}>`]);
     }
     if (panel === 'cases_gov') {
       await putPanel(client, 'case_request', ch.id, requestPanelPayload());
