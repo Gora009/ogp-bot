@@ -12,7 +12,10 @@ import { closedText, extendedText, isAlertMessage, resolveAlerts } from './alert
 import { destinations, editAll, mirrorsOf, pingIn, sendAll } from './mirror.js';
 import { C, COLOR, EPH, listProsecutors, msk, nowTs, safeText, sendDM, stamp } from './util.js';
 
-export const RESPOND_H = 12; // дедлайн ответа
+/** Дедлайн ответа (нажать «Принять») — через столько часов после подачи жалобы: время первого напоминания (по умолчанию 24) */
+export const respondHours = () => conf.reminderHours()[0] ?? 24;
+/** Срок ответа: от подачи жалобы на форуме; если назначили уже позже — минимум час на то, чтобы принять */
+export const respondByOf = (c, now = nowTs()) => Math.max((c.created_ts ?? now) + respondHours() * 3600, now + 3600);
 export const CLOSE_H = 72;   // дедлайн закрытия
 const PAGE = 25;
 const YELLOW = C.warn;
@@ -184,7 +187,7 @@ export function assign(client, c, userId, auto = false) {
               respond_by=?, close_by=?, notified_respond=0, notified_close=0, remind_stage=0, last_nag_ts=NULL
               WHERE thread_id=?`)
     // срок считается от подачи жалобы на форуме, а не от назначения; при переназначении не сбрасывается
-    .run(userId, now, now + RESPOND_H * 3600, c.close_by ?? deadlineOf(c), c.thread_id);
+    .run(userId, now, respondByOf(c, now), c.close_by ?? deadlineOf(c), c.thread_id);
   const f = getComplaint(c.thread_id);
   sendDM(client, userId, {
     embeds: [

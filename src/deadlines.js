@@ -1,11 +1,12 @@
 import { EmbedBuilder } from 'discord.js';
 import { db, getSetting, setSetting } from './db.js';
 import { fetchThreadState, fetchThreads } from './forum.js';
-import { assign, getComplaint, pickAuto, refreshMessage } from './complaints.js';
+import { assign, getComplaint, pickAuto, refreshMessage, respondByOf } from './complaints.js';
 import { closedText, postAlert, resolveAlerts } from './alerts.js';
 import { C, listProsecutors, msk, nowTs, sendDM, stamp } from './util.js';
 import { conf } from './config.js';
 
+const OPEN_SQL = `SELECT * FROM complaints WHERE status IN ('assigned','accepted') AND assignee_id IS NOT NULL AND close_by IS NOT NULL`;
 const FORUM_SYNC_MS = 3 * 60_000; // состояние тем на форуме (ответы, закрытие) — раз в 3 минуты
 let lastForumSync = 0;
 
@@ -118,16 +119,24 @@ export async function checkDeadlines(client, forumUrl, { force = false } = {}) {
   }
 
   const now = nowTs();
-  const open = db.prepare(`SELECT * FROM complaints WHERE status IN ('assigned','accepted') AND assignee_id IS NOT NULL
-                           AND close_by IS NOT NULL`).all();
-  // дедлайн ответа (нажать «Принять») проверяется только для жалоб, назначенных после включения проверки —
-  // иначе при первом запуске всем сразу пришли бы уведомления по старым жалобам
-  if (getSetting('respond_check_from') === null) setSetting('respond_check_from', String(now));
-  const respondFrom = Number(getSetting('respond_check_from'));
+  const open = db.prepare(OPEN_SQL).all();
+  // один раз: открытым непринятым жалобам — срок ответа по новому правилу (24 ч с подачи). Кому уже ушло
+  // первое напоминание — повторно не пишем, «просрочен ответ» им не придёт
+  if (getSetting('respond_v2') === null) {
+    for (const c of open.filter((x) => x.status === 'assigned' && !x.notified_respond)) {
+      if (c.remind_stage > 0) db.prepare('UPDATE complaints SET notified_respond=1 WHERE thread_id=?').run(c.thread_id);
+      else db.prepare('UPDATE complaints SET respond_by=? WHERE thread_id=?').run(respondByOf(c, c.assigned_ts ?? now), c.thread_id);
+    }
+    setSetting('respond_v2', '1');
+    open.splice(0, open.length, ...db.prepare(OPEN_SQL).all());
+  }
   for (const f of open) {
-    // 0) не нажал «Принять» до дедлайна ответа — ЛС исполнителю и карточка в канал просрочек
-    if (f.status === 'assigned' && f.respond_by && now >= f.respond_by && !f.notified_respond && f.assigned_ts >= respondFrom) {
-      db.prepare('UPDATE complaints SET notified_respond=1 WHERE thread_id=?').run(f.thread_id);
+    // 0) не нажал «Принять» до дедлайна ответа (24 ч с подачи) — вместо первого напоминания «⚠️ Просрочен дедлайн ответа!»
+    // исполнителю и карточка в канал просрочек; напоминание этого же этапа уже не шлём
+    if (f.status === 'assigned' && f.respond_by && now >= f.respond_by && !f.notified_respond) {
+      const stageNow = conf.reminderHours().map((h) => conf.deadlineHours() - h).filter((h) => h > 0)
+        .filter((h) => now >= f.close_by - h * 3600).length;
+      db.prepare('UPDATE complaints SET notified_respond=1, remind_stage=MAX(remind_stage, ?) WHERE thread_id=?').run(stageNow, f.thread_id);
       logSent(`Просрочен ответ по жалобе №${f.number}`, f.assignee_id, await sendDM(client, f.assignee_id, { embeds: [overdueEmbed(f, 'respond')] }));
       await postAlert(client, f, 'respond').catch((e) => console.error('alert:', e.message));
       res.overdueRespond = (res.overdueRespond ?? 0) + 1;
