@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import * as cheerio from 'cheerio';
 import { ApplicationCommandOptionType as O, EmbedBuilder } from 'discord.js';
 import { can, hasRulesFor, memberHas, trustedUsers } from './access.js';
-import { C, EPH, nowTs, safeText } from './util.js';
+import { C, EPH, nowTs, safeText, stamp } from './util.js';
 import { db } from './db.js';
 import { fetchPost, forumThreadUrl } from './forum.js';
 
@@ -765,23 +765,23 @@ function linkify(s) {
     out += `${safeText(s.slice(last, m.index))}[${safeText(m[1])}](${m[2]})`;
     last = m.index + m[0].length;
   }
-  // изменения в «Было/Стало»: {{…}} от ИИ и пометки документа {-…-} {+…+} {!…!} — курсивом
+  // изменения в «Было/Стало»: {{…}} от ИИ и пометки документа {-…-} {+…+} {!…!} — жирным (курсива в ответах нет)
   return (out + safeText(s.slice(last))).replace(/\{\{\s*([^{}]*?)\s*\}\}|\{[-+!]([^{}]*?)[-+!]\}/g,
-    (_, x, y) => ((x ?? y).trim() ? `*${(x ?? y).trim()}*` : ''));
+    (_, x, y) => ((x ?? y).trim() ? `**${(x ?? y).trim()}**` : ''));
 }
 
 export function resultEmbed({ title, url, typeLabel, text, ai, cached, limited, noAccess, warnings = [] }) {
-  // без колонтитула: пометка о способе разбора — мелкой строкой в конце текста, дата не нужна
-  const note = noAccess ? 'Упрощённый разбор: нет доступа к ИИ' : limited ? 'Лимит разборов ИИ на час исчерпан — упрощённый разбор'
-    : !ai ? 'Упрощённый разбор без ИИ' : cached ? 'Сохранённый разбор' : '';
+  // внизу, как везде: «ОГП • дата MSK» и способ разбора
+  const note = noAccess ? ' • упрощённый разбор: нет доступа к ИИ' : limited ? ' • лимит разборов ИИ на час исчерпан, упрощённый разбор'
+    : !ai ? ' • упрощённый разбор без ИИ' : cached ? ' • сохранённый разбор' : '';
   // в «Проверке» найдены расхождения — карточка жёлтая
   const flagged = /^Проверка:\s*\n(?!1\.\s*(?:Явных р|Р)асхождений)/m.test(String(text).replace(/\*\*/g, ''));
   const head = warnings.length ? `${warnings.map((w) => `⚠️ ${safeText(w)}`).join('\n')}\n\n` : '';
-  const tail = note ? `\n\n-# ${note}` : '';
   return new EmbedBuilder().setColor(flagged ? C.warn : C.details)
     .setTitle(clip(`📄 ${typeLabel}${title ? ` — ${title}` : ''}`, 256))
     .setURL(url)
-    .setDescription(head + formatResult(text).slice(0, 4096 - head.length - tail.length) + tail);
+    .setDescription(head + formatResult(text).slice(0, 4096 - head.length))
+    .setFooter({ text: stamp() + note });
 }
 
 /* ---------- кто может пользоваться ИИ ---------- */
