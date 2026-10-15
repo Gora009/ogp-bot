@@ -1,5 +1,5 @@
 import { EmbedBuilder } from 'discord.js';
-import { db } from './db.js';
+import { db, getSetting, setSetting } from './db.js';
 import { fetchThreadState, fetchThreads } from './forum.js';
 import { assign, getComplaint, pickAuto, refreshMessage } from './complaints.js';
 import { closedText, postAlert, resolveAlerts } from './alerts.js';
@@ -40,6 +40,8 @@ const nagEmbed = (c, now) =>
 
 /** ЛС о просрочке — как в оригинале */
 const OVERDUE_TEXT = {
+  respond: ['Просрочен дедлайн ответа!', (n) => `Вы не ответили на жалобу **№${n}** в установленный срок.`,
+    'Пожалуйста, срочно займитесь этой жалобой!'],
   close: ['Просрочен дедлайн закрытия!', (n) => `Жалоба **№${n}** не закрыта в установленный срок.`,
     'Пожалуйста, завершите работу по жалобе как можно скорее!'],
 };
@@ -118,7 +120,19 @@ export async function checkDeadlines(client, forumUrl, { force = false } = {}) {
   const now = nowTs();
   const open = db.prepare(`SELECT * FROM complaints WHERE status IN ('assigned','accepted') AND assignee_id IS NOT NULL
                            AND close_by IS NOT NULL`).all();
+  // дедлайн ответа (нажать «Принять») проверяется только для жалоб, назначенных после включения проверки —
+  // иначе при первом запуске всем сразу пришли бы уведомления по старым жалобам
+  if (getSetting('respond_check_from') === null) setSetting('respond_check_from', String(now));
+  const respondFrom = Number(getSetting('respond_check_from'));
   for (const f of open) {
+    // 0) не нажал «Принять» до дедлайна ответа — ЛС исполнителю и карточка в канал просрочек
+    if (f.status === 'assigned' && f.respond_by && now >= f.respond_by && !f.notified_respond && f.assigned_ts >= respondFrom) {
+      db.prepare('UPDATE complaints SET notified_respond=1 WHERE thread_id=?').run(f.thread_id);
+      logSent(`Просрочен ответ по жалобе №${f.number}`, f.assignee_id, await sendDM(client, f.assignee_id, { embeds: [overdueEmbed(f, 'respond')] }));
+      await postAlert(client, f, 'respond').catch((e) => console.error('alert:', e.message));
+      res.overdueRespond = (res.overdueRespond ?? 0) + 1;
+      continue;
+    }
     // флаги ставятся до отправки — параллельный проход (/check_deadlines) не продублирует уведомления
     // 1) напоминания исполнителю: за 48 и за 24 часа до дедлайна (через 24 и 48 ч после подачи жалобы)
     // напоминания задаются «через N ч после подачи» — переводим в «за M ч до дедлайна», чтобы продление их сдвигало

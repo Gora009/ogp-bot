@@ -4,7 +4,7 @@ import {
 } from 'discord.js';
 import { db, getSetting, setSetting } from './db.js';
 import { applicantFromTitle, fetchComplaintDetails, fetchFirstPost, fetchPage, fetchThreads, uniqueThreads } from './forum.js';
-import { analyzeText, mayUseAI, resultEmbed } from './analyze.js';
+import { analyzeText, docWarnings, mayUseAI, resultEmbed } from './analyze.js';
 import { can, isLeader, isSenior, refreshSeniorFlags, roleIdsWith } from './access.js';
 import { accusedIds, isRestricted } from './restricted.js';
 import { conf } from './config.js';
@@ -299,7 +299,10 @@ async function handleComplaint(client, i) {
     if (i.user.id !== c.assignee_id) return i.reply({ content: '⛔ Нет прав: принять жалобу может только назначенный исполнитель.', ...EPH });
     if (c.status !== 'assigned') return i.update(messagePayload(c));
     db.prepare(`UPDATE complaints SET status='accepted', accepted_ts=? WHERE thread_id=?`).run(nowTs(), c.thread_id);
-    return i.update(messagePayload(getComplaint(c.thread_id)));
+    await i.update(messagePayload(getComplaint(c.thread_id)));
+    // карточка «просрочен дедлайн ответа» в канале просрочек — решена
+    await resolveAlerts(client, getComplaint(c.thread_id), `✅ Жалоба принята — <@${i.user.id}>`, 'respond');
+    return;
   }
 
   // --- переназначить ---
@@ -385,7 +388,7 @@ async function handleComplaint(client, i) {
     const text = await fetchFirstPost(c.url).catch(() => null);
     if (!text) return i.followUp({ content: '⚠️ Не удалось открыть тему жалобы на форуме. Попробуйте позже.', ...EPH });
     const r = await analyzeText(text, 'complaint', i.user.id, { paid: await mayUseAI(client, i) });
-    const summary = resultEmbed({ title: `Жалоба №${c.number ?? '—'}`, url: c.url, typeLabel: 'Краткое содержание', ...r });
+    const summary = resultEmbed({ title: `Жалоба №${c.number ?? '—'}`, url: c.url, typeLabel: 'Краткое содержание', ...r, warnings: docWarnings(text) });
     return i.editReply({ embeds: [info, summary], components: extendRows(i, c), __noLogo: true });
   }
   if (action === 'xr' || action === 'xc') {
