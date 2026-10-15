@@ -344,15 +344,62 @@ export async function broadcast(client, i) {
   return i.editReply({ content: `Доставлено: ${ok} из ${r.ids.length} (${r.source})${fail}`, plain: true });
 }
 
+/**
+ * Удаляет ВСЕ сообщения бота в личках. Журнал отправленных ЛС бывает неполным (очистка базы, старые версии),
+ * поэтому бот сам проходит по личным чатам со всеми, кому мог писать: сотрудники, судьи, исполнители жалоб,
+ * авторы заявок и запросов дел, кураторы — и удаляет каждое своё сообщение в каждом чате.
+ */
 export async function clearAllDm(client, i) {
   await i.deferReply(EPH);
-  const rows = db.prepare('SELECT * FROM dm_log').all();
-  let n = 0;
-  for (const r of rows) {
-    try { await (await client.channels.fetch(r.channel_id)).messages.delete(r.message_id); n++; } catch { /* уже удалено */ }
+  const ids = new Set();
+  const add = (sql) => { for (const r of db.prepare(sql).all()) if (r.id) ids.add(String(r.id)); };
+  add('SELECT user_id id FROM prosecutors');
+  add('SELECT user_id id FROM judges');
+  add('SELECT DISTINCT assignee_id id FROM complaints');
+  add('SELECT DISTINCT user_id id FROM vacations');
+  add('SELECT DISTINCT user_id id FROM resignations');
+  add('SELECT DISTINCT prosecutor_id id FROM cases');
+  add('SELECT DISTINCT requester_id id FROM case_requests');
+  add('SELECT DISTINCT mentor_id id FROM mentorships');
+  add('SELECT DISTINCT mentee_id id FROM mentorships');
+  add('SELECT user_id id FROM deadline_responsible');
+  ids.add(i.user.id);
+  const chats = new Set(db.prepare('SELECT DISTINCT channel_id FROM dm_log').all().map((r) => r.channel_id));
+  for (const id of ids) {
+    const dm = await client.users.fetch(id).then((u) => u.createDM()).catch(() => null);
+    if (dm) chats.add(dm.id);
+  }
+  let deleted = 0;
+  let failed = 0;
+  let done = 0;
+  let lastShown = Date.now();
+  for (const id of chats) {
+    const ch = await client.channels.fetch(id).catch(() => null);
+    if (ch?.isDMBased?.()) {
+      // история чата — пачками по 100, от новых к старым; удаляем только свои сообщения
+      for (let before; ;) {
+        const batch = await ch.messages.fetch({ limit: 100, ...(before ? { before } : {}) }).catch(() => null);
+        if (!batch?.size) break;
+        for (const m of batch.values()) {
+          if (m.author.id !== client.user.id) continue;
+          if (await m.delete().then(() => true, () => false)) deleted++; else failed++;
+        }
+        before = batch.last().id;
+        if (batch.size < 100) break;
+      }
+    }
+    done++;
+    // прогресс раз в 10 секунд — удаление может идти несколько минут (ограничения Discord на скорость)
+    if (Date.now() - lastShown > 10_000) {
+      lastShown = Date.now();
+      await i.editReply(`🗑️ Удаляю… проверено чатов: ${done} из ${chats.size}, удалено сообщений: ${deleted}`).catch(() => {});
+    }
   }
   db.prepare('DELETE FROM dm_log').run();
-  return i.editReply(`Удалено ЛС-сообщений: ${n} из ${rows.length}.`);
+  const text = `🗑️ Готово: удалено сообщений бота в ЛС — ${deleted} (проверено личных чатов: ${chats.size})` +
+    (failed ? `\nНе удалось удалить: ${failed} — повторите команду позже.` : '');
+  // ответ на команду живёт 15 минут; если удаление шло дольше — итог в ЛС
+  return i.editReply(text).catch(() => sendDM(client, i.user.id, { content: text }));
 }
 
 /* ---------- ответственные за дедлайны ---------- */
