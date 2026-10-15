@@ -194,6 +194,12 @@ async function createCase(client, i, { owner, number, accused, passport, date, d
   const c = getCase(uin);
   const sent = await sendAll(client, reviewChannels, { embeds: [reviewEmbed(c)], components: reviewComponents(uin) }, { kind: 'case', ref: uin });
   if (sent[0]) db.prepare('UPDATE cases SET review_channel_id=?, review_message_id=? WHERE uin=?').run(sent[0].channelId, sent[0].id, uin);
+  // прокурору в ЛС — как в оригинале
+  await sendDM(client, owner, { embeds: [new EmbedBuilder().setColor(C.success)
+    .setTitle(existing ? '✅ Уголовное дело отправлено повторно' : '✅ Уголовное дело зарегистрировано')
+    .setDescription(`**Номер дела:** ${safeText(c.number?.startsWith(NO_NUMBER) ? uin : c.number)}\n` +
+      `**Обвиняемый:** ${safeText(c.accused ?? '—')}\n**Документ:** ${docLink(c.document)}\n\nДело отправлено на проверку ЗГП/ГП.`)
+    .setFooter({ text: stamp() })] });
   return i.editReply(`Дело ${existing ? 'отправлено повторно' : 'зарегистрировано'}. УИН: **${uin}**. Ожидайте решения.`);
 }
 
