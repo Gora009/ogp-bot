@@ -90,16 +90,29 @@ const ACTIONS = {
   warrant: { label: 'Выдать ордер', emoji: '📋', plain: () => 'Будет выдан ордер' },
   fine: { label: 'Назначить штраф', emoji: '💰', plain: (c) => `Штраф: ${c.action_value}` },
 };
-/** В карточке — со значком, в ЛС — простым текстом */
+/** Действие по делу со значком — в карточке и в ЛС («💰 Штраф: $1 123») */
 const actionText = (c) => (ACTIONS[c.action] ? `${ACTIONS[c.action].emoji} ${ACTIONS[c.action].plain(c)}` : '');
-const actionPlain = (c) => ACTIONS[c.action]?.plain(c) ?? '';
 
-/** ЛС прокурору о решении — как в оригинале: «Ваше дело УИН … - Одобрено» и строка «Решение: …» */
-function decisionDM(c) {
-  const head = `Ваше дело УИН ${c.uin} - ${{ approved: 'Одобрено', rejected: 'Отклонено', rework: 'На доработку' }[c.status]}`;
-  if (c.status === 'approved' && c.action) return `${head}\nРешение: ${actionPlain(c)}`;
-  if (c.status === 'rework' && c.comment) return `${head}\nКомментарий: ${c.comment}`;
-  return head;
+/** Имя того, кто проверил дело (как в оригинале — текстом, без упоминания) */
+const reviewerName = (id) => db.prepare('SELECT name FROM prosecutors WHERE user_id=?').get(id)?.name
+  ?? db.prepare('SELECT name FROM judges WHERE user_id=?').get(id)?.name ?? null;
+
+/**
+ * ЛС прокурору о решении — как в оригинале: «📁 Дело 3929317 — ✅ Одобрено · 💰 Штраф: $1 123»,
+ * ниже номер, обвиняемый и кто проверил.
+ */
+function decisionEmbed(c) {
+  const action = c.status === 'approved' && c.action ? ` · ${actionText(c)}` : '';
+  const who = reviewerName(c.decided_by);
+  return new EmbedBuilder().setColor(c.status === 'rework' ? C.brand : STATUS_COLOR[c.status] ?? COLOR)
+    .setTitle(`📁 Дело ${c.uin} — ${STATUS[c.status]}${action}`.slice(0, 256))
+    .setDescription([
+      `**Номер:** ${numberOf(c)}`,
+      `**Обвиняемый:** ${safeText(c.accused ?? '—')}`,
+      `**Проверил:** ${who ? safeText(who) : `<@${c.decided_by}>`}`,
+      ...(c.status === 'rework' && c.comment ? ['', `**Комментарий к доработке:** ${safeText(c.comment)}`] : []),
+    ].join('\n'))
+    .setFooter({ text: stamp() });
 }
 
 /** «50000» → «$50 000»; если ввели что-то своё (например, «$50k») — оставляем как есть */
@@ -147,7 +160,7 @@ async function applyAction(client, i, c, action, value) {
   // сюда приходят и выбор из списка (у него нет isFromMessage), и форма штрафа
   const onCard = !i.isModalSubmit() || i.isFromMessage();
   await (onCard ? i.update(payload) : i.reply({ ...payload, ...EPH }));
-  sendDM(client, f.prosecutor_id, { content: decisionDM(f), embeds: [caseEmbed(f)] });
+  sendDM(client, f.prosecutor_id, { embeds: [decisionEmbed(f)] });
 }
 
 const canSee = (i, c) => c.prosecutor_id === i.user.id || isLeader(i) || isJudge(i);
@@ -365,7 +378,7 @@ async function finalize(client, i, c, status, comment, action = null, value = nu
   db.prepare(`UPDATE cases SET status=?, comment=?, decided_by=?, decided_ts=?, action=?, action_value=?, action_by=?
               WHERE uin=?`).run(status, comment ?? null, i.user.id, nowTs(), action, value, action ? i.user.id : null, c.uin);
   const f = getCase(c.uin);
-  sendDM(client, f.prosecutor_id, { content: decisionDM(f), embeds: [caseEmbed(f)] });
+  sendDM(client, f.prosecutor_id, { embeds: [decisionEmbed(f)] });
   return f;
 }
 
