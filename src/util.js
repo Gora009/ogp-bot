@@ -97,13 +97,18 @@ async function reportDmBlocked(client, userId, user, payload) {
  * первая строка — заголовок, если в ней нет упоминаний (в заголовках Discord их не показывает).
  * Ответы со своими embed или файлами не трогаются. edit=true — правка сообщения: старый текст стирается.
  */
+/** true — превращать текстовые ответы в карточки (старый вид). Сейчас выключено: ответы как в оригинале, текстом. */
+const CARDS = false;
 const TONE = [
   [/^(⛔|❌|🚫)/u, C.danger], [/^⚠️/u, C.warn], [/^(✅|🗑️|➕|🔄|📢)/u, C.success],
 ];
 export function prettyPayload(p, edit = false) {
   if (typeof p === 'string') p = { content: p };
-  if (p?.plain) { const { plain, ...rest } = p; return rest; } // eslint-disable-line no-unused-vars -- «только текст»
+  if (p?.plain) { const { plain, ...rest } = p; p = rest; } // eslint-disable-line no-unused-vars -- старый флаг «только текст»
+  // как в оригинале: короткие ответы и ошибки — обычным текстом («Вы не можете обновлять список.»).
+  // При правке сообщения со старой карточкой текстом — карточку убираем, иначе текст окажется над ней.
   if (!p?.content || p.embeds?.length || p.files?.length || p.poll) return p;
+  if (!CARDS) return edit ? { ...p, embeds: [] } : p;
   const text = String(p.content).trim().slice(0, 4000);
   const color = TONE.find(([re]) => re.test(text))?.[1] ?? C.info;
   const [first, ...rest] = text.split('\n');

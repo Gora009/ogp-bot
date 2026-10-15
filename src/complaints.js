@@ -30,10 +30,17 @@ const head = (c) =>
   `**Номер:** №${c.number ?? '?'}\n**Тема:** ${safeText(c.title ?? '')}\n**Заявитель:** ${safeText(applicantOf(c))}\n` +
   `**Ссылка:** [Открыть на форуме](${c.url})`;
 
-const DUP = {
-  name: '⚠️ Дубликат номера жалобы!',
-  value: 'Жалоба с таким номером уже подавалась. Возможно, заявитель ошибся в нумерации.',
-};
+/** Пометка дубликата в карточке — строкой в конце, как в оригинале */
+const DUP_LINE = '\n\n⚠️ **Дубликат номера жалобы!**';
+
+/** Отдельное предупреждение в канал сразу после карточки дубликата */
+export function duplicateEmbed(c) {
+  const first = db.prepare('SELECT url FROM complaints WHERE number=? AND thread_id!=? ORDER BY created_ts LIMIT 1').get(c.number, c.thread_id);
+  return new EmbedBuilder().setColor(C.danger).setTitle('⚠️ Дубликат номера жалобы!')
+    .setDescription(`**Внимание:** Жалоба с номером **№${c.number ?? '?'}** уже была подана ранее!\n\n` +
+      `Возможно, заявитель ошибся в нумерации.\nПроверьте форум: [Открыть тему](${first?.url ?? c.url})`)
+    .setFooter({ text: stamp(c.created_ts) });
+}
 
 /** Пометка жалобы на руководство — одной строкой в карточке */
 const LOCK_LINE = '\n\n🔒 **Жалоба на руководство**';
@@ -58,17 +65,15 @@ function closedEmbed(c) {
 }
 
 export function complaintEmbed(c) {
-  const e = new EmbedBuilder().setDescription(head(c) + (c.restricted ? LOCK_LINE : ''));
+  const e = new EmbedBuilder().setDescription(head(c) + (c.restricted ? LOCK_LINE : '') + (c.duplicate ? DUP_LINE : ''));
   if (c.status === 'closed') return closedEmbed(c);
   if (!c.assignee_id) {
     e.setColor(C.brand).setTitle(`🔔 Жалоба №${c.number ?? '?'}`).setFooter({ text: stamp(c.created_ts) });
-    if (c.duplicate) e.addFields(DUP);
     return e;
   }
   const accepted = c.status === 'accepted';
   e.setColor(YELLOW).setTitle(`${accepted ? '🟡' : '📋'} Жалоба №${c.number ?? '?'}`)
     .setFooter({ text: stamp(accepted ? c.accepted_ts : c.assigned_ts) });
-  if (c.duplicate) e.addFields(DUP);
   e.addFields(
     { name: '📌 Назначено', value: `<@${c.assignee_id}>`, inline: true },
     { name: '⏰ Дедлайн', value: msk(c.close_by), inline: true }); // 72 ч с момента подачи жалобы на форуме
@@ -433,6 +438,8 @@ async function postComplaint(client, t) {
     return payload;
   }, { kind: 'complaint', ref: t.id });
   if (sent[0]) db.prepare('UPDATE complaints SET message_id=? WHERE thread_id=?').run(sent[0].id, t.id);
+  // дубликат номера — следом отдельное предупреждение, туда же, куда ушла карточка
+  if (dup) await sendAll(client, sent.map((m) => m.channelId), { embeds: [duplicateEmbed(getComplaint(t.id))] });
 }
 
 /** При первом запуске свежие жалобы без ответа (моложе срока ответа) всё равно публикуются */

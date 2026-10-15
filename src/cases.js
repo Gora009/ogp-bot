@@ -246,13 +246,16 @@ export async function caseInfo(client, i) {
 }
 
 export async function casesStats(client, i) {
-  const rows = db.prepare('SELECT status, COUNT(*) n FROM cases GROUP BY status').all();
-  const by = Object.fromEntries(rows.map((r) => [r.status, r.n]));
-  const total = rows.reduce((s, r) => s + r.n, 0);
-  const e = new EmbedBuilder().setColor(COLOR).setTitle('📊 Статистика уголовных дел')
-    .setDescription(`Всего дел: **${total}**\n\n` +
-      Object.entries(STATUS).map(([k, v]) => `${v}: **${by[k] ?? 0}**`).join('\n'))
-    .setFooter({ text: stamp() });
+  const by = Object.fromEntries(db.prepare('SELECT status, COUNT(*) n FROM cases GROUP BY status').all().map((r) => [r.status, r.n]));
+  const total = Object.values(by).reduce((s, n) => s + n, 0);
+  const e = new EmbedBuilder().setColor(COLOR).setTitle('📁 Статистика уголовных дел')
+    .setDescription(`**Всего зарегистрировано:** ${total}`)
+    .addFields(
+      { name: '⏳ На рассмотрении', value: String(by.pending ?? 0), inline: true },
+      { name: '✅ Одобрены', value: String(by.approved ?? 0), inline: true },
+      { name: '🔄 На доработке', value: String(by.rework ?? 0), inline: true },
+      { name: '❌ Отклонены', value: String(by.rejected ?? 0), inline: true },
+    ).setFooter({ text: stamp() });
   return i.reply({ embeds: [e], ...EPH });
 }
 
@@ -262,6 +265,7 @@ export function caseLines(rows) {
 
 export async function myCases(client, i) {
   const rows = db.prepare('SELECT * FROM cases WHERE prosecutor_id=? ORDER BY created_ts DESC LIMIT 25').all(i.user.id);
+  if (!rows.length) return i.reply({ content: 'У вас нет зарегистрированных дел.', ...EPH });
   const e = new EmbedBuilder().setColor(COLOR).setTitle('📁 Мои уголовные дела')
     .setDescription(caseLines(rows)).setFooter({ text: stamp() });
   return i.reply({ embeds: [e], ...EPH });

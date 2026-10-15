@@ -1,17 +1,20 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
+import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
+import { fileURLToPath } from 'node:url';
 import { db } from './db.js';
 import { STATUS as CASE_STATUS } from './cases.js';
-import { VAC_STATUS } from './vacations.js';
-import { STATUS as MENTOR_STATUS } from './mentoring.js';
-import { COLOR, EPH, isOnVacation, msk, mskDate, nowTs, stamp } from './util.js';
+import { RULES, norm } from './roles.js';
+import { COLOR, EPH, isOnVacation, mskDate, nowTs, stamp } from './util.js';
 
+/**
+ * /cabinet — личный кабинет, как в оригинале:
+ *  главная (должность, статус, жалобы, дела), «Мои жалобы», «Мои дела», «История отпусков» — списки по 5 со стрелками;
+ *  «Нагрузка» и «Отпуска» — статистика офиса с графиком и фильтром Неделя / Месяц / Всё.
+ */
 const PER = 5;
-const PERIODS = { week: 'Неделя', month: 'Месяц', all: 'Всё' };
-const VIEWS = { complaints: ['📋', 'Жалобы'], cases: ['📁', 'Дела'], vacation: ['🏖️', 'Отпуск'], load: ['📊', 'Нагрузка'], vacations: ['📈', 'Отпуска'] };
-const CSTATUS = { assigned: '📋 назначена', accepted: '🟡 в работе', closed: '🔒 закрыта', new: '⚪ новая' };
-const RESULT = { satisfied: 'удовлетворена', rejected: 'отклонена' };
-
+const PERIODS = { week: 'За неделю', month: 'За месяц', all: 'Всё время' };
+const STATS = new Set(['load', 'vacations']); // фильтр по периоду — только здесь
 const since = (p) => (p === 'week' ? nowTs() - 7 * 86400 : p === 'month' ? nowTs() - 30 * 86400 : 0);
+const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 function page(rows, p) {
   const pages = Math.max(1, Math.ceil(rows.length / PER));
@@ -19,114 +22,169 @@ function page(rows, p) {
   return { items: rows.slice(n * PER, n * PER + PER), n, pages };
 }
 
-function buttons(view, period, p, pages) {
-  const row1 = new ActionRowBuilder().addComponents(
-    ...Object.entries(VIEWS).map(([k, [emoji, label]]) =>
-      new ButtonBuilder().setCustomId(`cab:${k}:${period}:0`).setLabel(`${emoji} ${label}`)
-        .setStyle(view === k ? ButtonStyle.Primary : ButtonStyle.Secondary)));
-  const listView = ['complaints', 'cases', 'vacations', 'mentoring'].includes(view);
-  const row2 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`cab:${view}:${period}:${p - 1}`).setEmoji('◀️').setStyle(ButtonStyle.Primary)
-      .setDisabled(!listView || p <= 0),
-    new ButtonBuilder().setCustomId(`cab:${view}:${period}:${p + 1}`).setEmoji('▶️').setStyle(ButtonStyle.Primary)
-      .setDisabled(!listView || p >= pages - 1),
-    ...Object.entries(PERIODS).map(([k, label]) =>
-      new ButtonBuilder().setCustomId(`cab:${view}:${k}:0`).setLabel(label)
-        .setStyle(period === k ? ButtonStyle.Success : ButtonStyle.Secondary)));
-  const row3 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`cab:mentoring:${period}:0`).setLabel('🎓 Кураторство')
-      .setStyle(view === 'mentoring' ? ButtonStyle.Primary : ButtonStyle.Secondary));
-  return [row1, row2, row3];
+function buttons(view, period, p) {
+  const nav = (k, emoji, label) => new ButtonBuilder().setCustomId(`cab:${k}:${period}:0`).setLabel(label).setEmoji(emoji)
+    .setStyle(ButtonStyle.Secondary);
+  return [
+    new ActionRowBuilder().addComponents(
+      nav('complaints', '📋', 'Жалобы'), nav('cases', '📁', 'Дела'), nav('vacation', '🏖️', 'Отпуск'),
+      nav('load', '📊', 'Нагрузка'), nav('vacations', '📈', 'Отпуска')),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`cab:${view}:${period}:${p - 1}:prev`).setEmoji('◀️').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`cab:${view}:${period}:${p + 1}:next`).setEmoji('▶️').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`cab:${view}:week:0:f`).setLabel('Неделя').setEmoji('📅').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`cab:${view}:month:0:f`).setLabel('Месяц').setEmoji('📅').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`cab:${view}:all:0:f`).setLabel('Всё').setEmoji('📊').setStyle(ButtonStyle.Secondary)),
+  ];
+}
+
+/** Должность по ролям: самая высокая из известных (ГП → ЗГП → СГП → …), иначе старшая роль */
+function position(member) {
+  const names = [...(member?.roles?.cache?.values?.() ?? [])].map((r) => r.name);
+  for (const rule of RULES) if (names.some((n) => rule.test(norm(n)))) return rule.label;
+  const top = member?.roles?.highest;
+  return top && top.name !== '@everyone' ? top.name : 'Прокурор';
+}
+
+const personName = (uid) => db.prepare('SELECT name FROM prosecutors WHERE user_id=?').get(uid)?.name ?? null;
+
+/** Картинка-график (Chart.js через quickchart.io) — как в оригинале */
+function chartUrl(config) {
+  return `https://quickchart.io/chart?w=500&h=300&bkg=white&c=${encodeURIComponent(JSON.stringify(config))}`;
+}
+
+const COMPLAINT_DOT = (c) => (c.status === 'closed'
+  ? ({ satisfied: '🟢', rejected: '🔴' }[c.result] ?? '⚪') : c.status === 'accepted' ? '🟡' : '📋');
+
+function vacDot(v, n = nowTs()) {
+  if (v.status === 'pending') return '⏳';
+  if (v.status === 'rejected') return '❌';
+  if (v.status === 'cancelled') return '🚫';
+  if (v.start_ts <= n && v.end_ts >= n) return '🏖️';
+  return v.end_ts < n ? '✔️' : '✅';
 }
 
 export function render(i, view = 'main', period = 'all', p = 0) {
   const uid = i.user.id;
-  const name = i.member?.displayName ?? i.user.username;
-  const from = since(period);
-  const e = new EmbedBuilder().setColor(COLOR).setThumbnail(i.user.displayAvatarURL()).setFooter({ text: stamp() });
-  let pages = 1;
+  const name = i.member?.displayName ?? i.user.globalName ?? i.user.username;
+  const e = new EmbedBuilder().setColor(COLOR);
 
   if (view === 'main') {
     const active = db.prepare(`SELECT COUNT(*) n FROM complaints WHERE assignee_id=? AND status IN ('assigned','accepted')`).get(uid).n;
     const total = db.prepare('SELECT COUNT(*) n FROM complaints WHERE assignee_id=?').get(uid).n;
     const cases = db.prepare('SELECT COUNT(*) n FROM cases WHERE prosecutor_id=?').get(uid).n;
-    const role = i.member?.roles?.highest;
-    e.setTitle(`Личный кабинет — ${name}`).addFields(
-      { name: 'Должность', value: `⭐ ${role && role.name !== '@everyone' ? role.name : 'Прокурор'}`, inline: true },
+    e.setTitle(`Личный кабинет — ${name}`).setThumbnail(i.user.displayAvatarURL()).addFields(
+      { name: 'Должность', value: `⭐ ${position(i.member)}`, inline: true },
       { name: 'Статус', value: isOnVacation(uid) ? '🏖️ В отпуске' : '✅ На службе', inline: true },
       { name: '​', value: '​', inline: true },
       { name: '📋 Активные жалобы', value: String(active), inline: true },
       { name: '📋 Всего жалоб', value: String(total), inline: true },
       { name: '📁 Всего дел', value: String(cases), inline: true },
-      { name: '​', value: 'Используйте кнопки ниже для навигации' },
-    );
+    ).setFooter({ text: 'Используйте кнопки ниже для навигации' });
   } else if (view === 'complaints') {
-    const rows = db.prepare('SELECT * FROM complaints WHERE assignee_id=? AND assigned_ts>=? ORDER BY assigned_ts DESC').all(uid, from);
-    const pg = page(rows, p); pages = pg.pages; p = pg.n;
-    e.setTitle(`📋 Мои жалобы — ${PERIODS[period]}`).setDescription(
-      pg.items.map((c) => `• **№${c.number ?? '?'}** [открыть](${c.url}) — ${CSTATUS[c.status] ?? c.status}${c.result ? ` (${RESULT[c.result]})` : ''}` +
-        (c.status === 'assigned' || c.status === 'accepted' ? `\n  ⏰ закрыть до ${msk(c.close_by)}` : '')).join('\n') ||
-      'Жалоб за период нет.').setFooter({ text: `Стр. ${p + 1}/${pages} • ${stamp()}` });
+    const rows = db.prepare('SELECT * FROM complaints WHERE assignee_id=? ORDER BY created_ts DESC').all(uid);
+    const pg = page(rows, p);
+    p = pg.n;
+    e.setTitle('📋 Мои жалобы').setDescription(pg.items.map((c) =>
+      `${COMPLAINT_DOT(c)} **№${c.number ?? '?'}** | ${mskDate(c.created_ts)}\n└ ${clip(c.title ?? '', 48)}`).join('\n\n') || 'Нет жалоб')
+      .setFooter({ text: `Страница ${pg.n + 1}/${pg.pages} • Всего: ${rows.length}` });
   } else if (view === 'cases') {
-    const rows = db.prepare('SELECT * FROM cases WHERE prosecutor_id=? AND created_ts>=? ORDER BY created_ts DESC').all(uid, from);
-    const pg = page(rows, p); pages = pg.pages; p = pg.n;
-    e.setTitle(`📁 Мои дела — ${PERIODS[period]}`).setDescription(
-      pg.items.map((c) => `• **${c.uin}** — ${c.accused} — ${CASE_STATUS[c.status]}`).join('\n') || 'Дел за период нет.')
-      .setFooter({ text: `Стр. ${p + 1}/${pages} • ${stamp()}` });
+    const rows = db.prepare('SELECT * FROM cases WHERE prosecutor_id=? ORDER BY created_ts DESC').all(uid);
+    const pg = page(rows, p);
+    p = pg.n;
+    e.setTitle('📁 Мои дела').setDescription(pg.items.map((c) =>
+      `${(CASE_STATUS[c.status] ?? '•').split(' ')[0]} **${c.uin}** | ${mskDate(c.created_ts)}\n└ ${clip(c.accused ?? '—', 48)}`).join('\n\n') ||
+      'Нет уголовных дел')
+      .setFooter({ text: `Страница ${pg.n + 1}/${pg.pages} • Всего: ${rows.length}` });
   } else if (view === 'vacation') {
-    const n = nowTs();
-    const v = db.prepare(`SELECT * FROM vacations WHERE user_id=? AND status IN ('approved','pending') AND end_ts>=?
-                          ORDER BY start_ts LIMIT 1`).get(uid, n);
-    e.setTitle('🏖️ Мой отпуск').setDescription(v
-      ? `**Период:** ${mskDate(v.start_ts)} — ${mskDate(v.end_ts)}\n**Статус:** ${VAC_STATUS[v.status]}`
-      : 'Активных и запланированных отпусков нет. Подать заявку: `/vacation`.');
+    const rows = db.prepare('SELECT * FROM vacations WHERE user_id=? ORDER BY start_ts DESC').all(uid);
+    const pg = page(rows, p);
+    p = pg.n;
+    e.setTitle('🏖️ История отпусков').setDescription(pg.items.map((v) =>
+      `${vacDot(v)} **ID: ${v.id}**\n└ ${mskDate(v.start_ts)} — ${mskDate(v.end_ts)}`).join('\n') || 'Нет истории отпусков')
+      .setFooter({ text: pg.pages > 1 ? `Страница ${pg.n + 1}/${pg.pages} • Всего: ${rows.length}` : stamp() });
   } else if (view === 'load') {
-    const stat = db.prepare(`
-      SELECT assignee_id id, COUNT(*) total, SUM(status='closed') closed,
-             SUM(notified_respond=1 OR notified_close=1) overdue,
-             SUM(status='closed' AND notified_respond=0 AND notified_close=0) clean,
-             AVG(CASE WHEN status='closed' AND closed_ts>assigned_ts THEN closed_ts-assigned_ts END) avg_close
-      FROM complaints WHERE assignee_id IS NOT NULL AND assigned_ts>=? GROUP BY assignee_id ORDER BY total DESC`).all(from);
-    const mine = stat.find((s) => s.id === uid);
-    const pct = (n) => (mine?.total ? `${Math.round(((n ?? 0) / mine.total) * 100)}%` : '—');
-    const hours = mine?.avg_close ? `${(mine.avg_close / 3600).toFixed(1)} ч` : '—';
-    const avg = stat.length ? (stat.reduce((a, s) => a + s.total, 0) / stat.length).toFixed(1) : '0';
-    const rank = stat.findIndex((s) => s.id === uid) + 1;
-    e.setTitle(`📊 Нагрузка — ${PERIODS[period]}`).addFields(
-      { name: 'Получено жалоб', value: String(mine?.total ?? 0), inline: true },
-      { name: 'Закрыто', value: String(mine?.closed ?? 0), inline: true },
-      { name: 'С просрочкой', value: String(mine?.overdue ?? 0), inline: true },
-      { name: 'Среднее по прокурорам', value: avg, inline: true },
-      { name: 'Место по нагрузке', value: rank ? `${rank} из ${stat.length}` : '—', inline: true },
-      { name: 'Средний срок закрытия', value: hours, inline: true },
-      { name: '% просрочек', value: pct(mine?.overdue), inline: true },
-      { name: 'Эффективность', value: pct(mine?.clean), inline: true });
+    const from = since(period);
+    const s = db.prepare(`SELECT SUM(status='new') fresh, SUM(status IN ('assigned','accepted')) work, SUM(status='closed') closed,
+                                 SUM(notified_close=1 OR notified_respond=1) overdue,
+                                 SUM(status='closed' AND notified_close=0 AND notified_respond=0) clean,
+                                 AVG(CASE WHEN status='closed' AND closed_ts>created_ts THEN closed_ts-created_ts END) avg_close
+                          FROM complaints WHERE status!='old' AND created_ts>=?`).get(from);
+    const eff = s.closed ? `${Math.round(((s.clean ?? 0) / s.closed) * 100)}%` : '—';
+    const avg = s.avg_close ? `${(s.avg_close / 3600).toFixed(1)}ч` : '—';
+    e.setTitle('📊 Статистика нагрузки').setDescription([
+      `📊 **Период:** ${PERIODS[period]}`, '',
+      '**Общая статистика:**',
+      `• 🔔 Новых: **${s.fresh ?? 0}**`, `• 📋 В работе: **${s.work ?? 0}**`,
+      `• ✅ Закрыто: **${s.closed ?? 0}**`, `• ⏰ Просрочено: **${s.overdue ?? 0}**`, '',
+      '**Метрики:**', `• ⏰ Средний срок закрытия: **${avg}**`, `• 📈 Эффективность: **${eff}**`,
+    ].join('\n')).setFooter({ text: stamp() });
+    // график: активные и закрытые по исполнителям (самые нагруженные)
+    const per = db.prepare(`SELECT assignee_id id, SUM(status IN ('assigned','accepted')) active, SUM(status='closed') closed
+                            FROM complaints WHERE assignee_id IS NOT NULL AND status!='old' AND created_ts>=?
+                            GROUP BY assignee_id ORDER BY closed + active DESC LIMIT 6`).all(from);
+    if (per.length) {
+      e.setImage(chartUrl({
+        type: 'bar',
+        data: {
+          labels: per.map((r) => clip(personName(r.id) ?? 'Прокурор', 10)),
+          datasets: [
+            { label: 'Актив', data: per.map((r) => r.active), backgroundColor: 'rgb(254,231,92)' },
+            { label: 'Закр', data: per.map((r) => r.closed), backgroundColor: 'rgb(87,242,135)' },
+          ],
+        },
+      }));
+    }
   } else if (view === 'vacations') {
-    const rows = db.prepare('SELECT * FROM vacations WHERE user_id=? AND created_ts>=? ORDER BY start_ts DESC').all(uid, from);
-    const pg = page(rows, p); pages = pg.pages; p = pg.n;
-    e.setTitle(`📈 История отпусков — ${PERIODS[period]}`).setDescription(
-      pg.items.map((v) => `• ${mskDate(v.start_ts)} — ${mskDate(v.end_ts)} — ${VAC_STATUS[v.status]}`).join('\n') || 'Отпусков за период нет.')
-      .setFooter({ text: `Стр. ${p + 1}/${pages} • ${stamp()}` });
-  } else if (view === 'mentoring') {
-    const rows = db.prepare('SELECT * FROM mentorships WHERE (mentor_id=? OR mentee_id=?) AND created_ts>=? ORDER BY created_ts DESC')
-      .all(uid, uid, from);
-    const done = rows.filter((m) => m.mentor_id === uid && m.status === 'done').length;
-    const pg = page(rows, p); pages = pg.pages; p = pg.n;
-    e.setTitle(`🎓 Кураторство — ${PERIODS[period]}`).setDescription(
-      (pg.items.map((m) => m.mentor_id === uid
-        ? `• **№${m.id}** вы куратор → <@${m.mentee_id}> — ${MENTOR_STATUS[m.status]} — до ${mskDate(m.end_by)}`
-        : `• **№${m.id}** ваш куратор: <@${m.mentor_id}> — ${MENTOR_STATUS[m.status]} — до ${mskDate(m.end_by)}`).join('\n') ||
-        'Кураторств за период нет.') + `
-
-**Успешно завершено как куратор:** ${done}`)
-      .setFooter({ text: `Стр. ${p + 1}/${pages} • ${stamp()}` });
+    const from = since(period);
+    const n = nowTs();
+    const s = db.prepare(`SELECT SUM(status='pending') pending,
+                                 SUM(status='approved' AND start_ts>?) upcoming,
+                                 SUM(status='approved' AND start_ts<=? AND end_ts>=?) active,
+                                 SUM(status='approved' AND end_ts<?) done,
+                                 SUM(status='rejected') rejected, SUM(status='cancelled') cancelled,
+                                 SUM(CASE WHEN status='approved' THEN (end_ts-start_ts)/86400+1 ELSE 0 END) days
+                          FROM vacations WHERE created_ts>=?`).get(n, n, n, n, from);
+    const now = db.prepare(`SELECT user_id FROM vacations WHERE status='approved' AND start_ts<=? AND end_ts>=?`).all(n, n)
+      .map((v) => personName(v.user_id) ?? `<@${v.user_id}>`);
+    e.setTitle('📈 Статистика отпусков').setDescription([
+      `📈 **Период:** ${PERIODS[period]}`, '',
+      '**Статистика отпусков:**',
+      `• ⏳ Ожидают одобрения: **${s.pending ?? 0}**`, `• ✅ Одобрено: **${s.upcoming ?? 0}**`,
+      `• 🏖️ Активно сейчас: **${s.active ?? 0}**`, `• ✔️ Завершено: **${s.done ?? 0}**`,
+      `• ❌ Отклонено: **${s.rejected ?? 0}**`, `• 🚫 Отменено: **${s.cancelled ?? 0}**`, '',
+      `📅 **Всего дней отпусков:** ${Math.round(s.days ?? 0)}`, '',
+      '🏖️ **Сейчас в отпуске:**', now.join('\n') || 'Никого',
+    ].join('\n')).setFooter({ text: stamp() });
+    const parts = [['Одобр', s.upcoming, 'rgb(84,160,214)'], ['Актив', s.active, 'rgb(87,242,135)'],
+      ['Заверш', s.done, 'rgb(160,170,180)'], ['Откл', s.rejected, 'rgb(237,66,69)']];
+    if (parts.some(([, v]) => v)) {
+      e.setImage(chartUrl({
+        type: 'pie',
+        data: { labels: parts.map(([l]) => l), datasets: [{ data: parts.map(([, v]) => v ?? 0), backgroundColor: parts.map(([, , c]) => c) }] },
+      }));
+    }
   }
-  return { embeds: [e], components: buttons(view, period, p, pages) };
+  return { embeds: [e], components: buttons(view, period, p) };
 }
 
-export const cabinet = (client, i) => i.reply({ ...render(i), ...EPH });
+/**
+ * Герб справа — во всех разделах, кроме главной (там аватар). Файл герба прикладываем сами при каждом
+ * переключении: на главной его нет, и без этого после неё картинка в других разделах не показалась бы.
+ */
+const LOGO = fileURLToPath(new URL('../assets/logo.webp', import.meta.url));
+function withLogo(payload, view) {
+  if (view === 'main') return { ...payload, files: [], attachments: [], __noLogo: true };
+  payload.embeds[0].setThumbnail('attachment://logo.webp');
+  return { ...payload, files: [new AttachmentBuilder(LOGO, { name: 'logo.webp' })], attachments: [], __noLogo: true };
+}
+
+export const cabinet = (client, i) => i.reply({ ...withLogo(render(i), 'main'), ...EPH });
 
 export function handleCab(client, i) {
-  const [, view, period, p] = i.customId.split(':');
-  return i.update(render(i, view, period, Number(p)));
+  const [, view, period, p, flag] = i.customId.split(':');
+  // Неделя / Месяц / Всё — только в «Нагрузке» и «Отпусках»
+  if (flag === 'f' && !STATS.has(view)) return i.reply({ content: '❌ Фильтр доступен только для статистики.', ...EPH });
+  const v = ['main', 'complaints', 'cases', 'vacation', 'load', 'vacations'].includes(view) ? view : 'main';
+  return i.update(withLogo(render(i, v, Object.hasOwn(PERIODS, period) ? period : 'all', Number(p) || 0), v));
 }

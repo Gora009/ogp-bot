@@ -215,9 +215,10 @@ export async function handleVac(client, i) {
 export async function vacations(client, i) {
   const n = nowTs();
   const rows = db.prepare(`SELECT * FROM vacations WHERE status='approved' AND end_ts>=? ORDER BY start_ts LIMIT 25`).all(n);
-  const text = rows.map((v) => `• <@${v.user_id}> — ${range(v)} ${v.start_ts <= n ? '🟢 идёт' : '🕓 впереди'}`).join('\n');
+  // ID — номер заявки на отпуск (тот же номер — в «Истории отпусков» кабинета)
+  const text = rows.map((r) => `${r.start_ts <= n ? '🏖️' : '✅'} **ID: ${r.id}** — <@${r.user_id}>\n└ ${range(r)}`).join('\n');
   return i.reply({
-    embeds: [new EmbedBuilder().setColor(COLOR).setTitle('🏖️ Активные отпуска')
+    embeds: [new EmbedBuilder().setColor(COLOR).setTitle('🏖️ Отпуска')
       .setDescription(text || 'Активных отпусков нет.').setFooter({ text: stamp() })],
     ...EPH,
   });

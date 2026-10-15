@@ -188,9 +188,13 @@ export async function removePanel(client, id) {
 }
 
 export async function panelDelete(client, i) {
-  const p = await removePanel(client, i.options.getInteger('id'));
-  if (!p) return i.reply({ content: 'Панель не найдена. Смотрите /panels_list.', ...EPH });
-  return i.reply({ content: `Панель #${p.id} удалена из базы данных.`, ...EPH });
+  const type = i.options.getString('panel_type');
+  const ch = i.options.getChannel('channel');
+  const rows = db.prepare('SELECT id FROM panels WHERE type=? AND (guild_id=? OR guild_id IS NULL)' + (ch ? ' AND channel_id=?' : ''))
+    .all(...(ch ? [type, i.guildId, ch.id] : [type, i.guildId]));
+  if (!rows.length) return i.reply({ content: 'Панель не найдена.', ...EPH });
+  for (const r of rows) await removePanel(client, r.id);
+  return i.reply({ content: `✅ Панель «${PANEL_NAMES[type] ?? type}» удалена${ch ? ` из <#${ch.id}>` : ''}.`, ...EPH });
 }
 
 /* ---------- люди ---------- */
@@ -367,21 +371,31 @@ export async function deadlineResponsible(client, i) {
 }
 
 export async function checkResponsible(client, i) {
-  const rows = db.prepare('SELECT user_id FROM deadline_responsible').all();
+  await i.deferReply(EPH);
+  // ответственные: список из /deadline_responsible и все, у кого право «Мониторинг и дедлайны» (по роли — ЗГП)
+  const ids = new Set(db.prepare('SELECT user_id FROM deadline_responsible').all().map((r) => r.user_id));
+  const members = await i.guild.members.fetch().catch(() => null);
+  for (const m of members?.values() ?? []) if (!m.user.bot && memberHas(m, 'monitor')) ids.add(m.id);
   const lines = [];
-  for (const r of rows) {
-    const inGuild = await i.guild.members.fetch(r.user_id).then(() => true, () => false);
-    lines.push(`• <@${r.user_id}> — ${inGuild ? '✅ на сервере' : '⚠️ не найден на сервере'}`);
+  for (const id of ids) {
+    const m = members?.get(id) ?? await i.guild.members.fetch(id).catch(() => null);
+    const name = m?.displayName ?? (await client.users.fetch(id).catch(() => null))?.globalName ?? 'Неизвестный';
+    lines.push(`• **${name}** (ID: \`${id}\`) — ${m ? '✅ На сервере' : '❌ Не найден на сервере'}`);
   }
-  const overdue = db.prepare(`SELECT COUNT(*) n FROM complaints WHERE status IN ('assigned','accepted') AND (notified_respond=1 OR notified_close=1)`).get().n;
-  return reply(i, 'Ответственные за дедлайны', `${lines.join('\n') || 'Список пуст — назначьте через /deadline_responsible.'}\n\nЖалоб с просрочкой сейчас: **${overdue}**`);
+  const e = new EmbedBuilder().setColor(COLOR).setTitle('⏰ Проверка ответственных')
+    .setDescription(`⏰ **Ответственные за мониторинг дедлайнов:**\n\n${lines.join('\n') ||
+      'Никого нет. Добавьте: \`/deadline_responsible\` или выдайте роли право «Мониторинг и дедлайны» в \`/settings\` → Доступ.'}`)
+    .setFooter({ text: stamp() });
+  return i.editReply({ embeds: [e] });
 }
 
 export async function checkDeadlinesCmd(client, i) {
   await i.deferReply(EPH);
-  const r = await checkDeadlines(client, FORUM_URL, { force: true });
-  return i.editReply(`Закрыто на форуме: ${r.closed}\nНапоминаний отправлено: ${r.reminders}\nПросрочено закрытие: ${r.overdueClose}\nПовторных напоминаний: ${r.nags}\nАвтоназначено: ${r.autoAssigned}`);
+  await checkDeadlines(client, FORUM_URL, { force: true });
+  // «таймер» — повтор напоминаний по просроченным жалобам (настройка в /settings → Жалобы)
+  return i.editReply(`✅ Проверка дедлайнов выполнена. Таймер сброшен на ${conf.repeatHours()} ${hoursWord(conf.repeatHours())}.`);
 }
+const hoursWord = (n) => (n % 10 === 1 && n % 100 !== 11 ? 'час' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'часа' : 'часов');
 
 /* ---------- парсер ---------- */
 const STATUS_NAMES = { old: '⏭️ пропущена (была на форуме до запуска бота)', new: '🆕 ждёт назначения', assigned: '👤 назначена', accepted: '🛠️ в работе', closed: '✅ закрыта' };
@@ -434,21 +448,17 @@ export async function findComplaint(client, i) {
 }
 
 export async function complaintsStats(client, i) {
-  const r = db.prepare(`SELECT COUNT(*) total, SUM(status='new') pending, SUM(status IN ('assigned','accepted')) assigned,
-                               SUM(status='accepted') accepted, SUM(status='closed') closed,
-                               SUM(result='satisfied') satisfied, SUM(result='rejected') rejected, SUM(duplicate=1) dups
+  const r = db.prepare(`SELECT SUM(status='new') fresh, SUM(status='assigned') assigned, SUM(status='accepted') accepted,
+                               SUM(result='satisfied') satisfied, SUM(result='rejected') rejected
                         FROM complaints WHERE status!='old'`).get();
-  const week = db.prepare(`SELECT COUNT(*) n FROM complaints WHERE status!='old' AND posted_ts>=?`).get(nowTs() - 7 * 86400).n;
-  // метрики по назначенным жалобам
-  const m = db.prepare(`SELECT COUNT(*) total, SUM(notified_respond=1 OR notified_close=1) overdue,
-                               SUM(status='closed' AND notified_respond=0 AND notified_close=0) clean,
-                               AVG(CASE WHEN status='closed' AND closed_ts>assigned_ts THEN closed_ts-assigned_ts END) avg_close
-                        FROM complaints WHERE assignee_id IS NOT NULL`).get();
-  const pct = (n) => (m.total ? `${Math.round(((n ?? 0) / m.total) * 100)}%` : '—');
-  const hours = m.avg_close ? `${(m.avg_close / 3600).toFixed(1)} ч` : '—';
-  return reply(i, '📊 Статистика жалоб',
-    `Всего: **${r.total}** (за 7 дней: **${week}**)\nОжидают назначения: **${r.pending ?? 0}**\nВ работе: **${r.assigned ?? 0}** (из них приняты: **${r.accepted ?? 0}**)\nЗакрыто: **${r.closed ?? 0}** (удовлетворено: **${r.satisfied ?? 0}**, отклонено: **${r.rejected ?? 0}**)\nДубликатов номера: **${r.dups ?? 0}**\n\n` +
-    `**Метрики по назначенным:**\nСредний срок закрытия: **${hours}**\nПроцент просрочек: **${pct(m.overdue)}**\nЭффективность (закрыто без просрочки): **${pct(m.clean)}**`);
+  const e = new EmbedBuilder().setColor(COLOR).setTitle('📋 Статистика жалоб').addFields(
+    { name: '🔔 Новые', value: String(r.fresh ?? 0), inline: true },
+    { name: '📋 Назначены', value: String(r.assigned ?? 0), inline: true },
+    { name: '🟡 В работе', value: String(r.accepted ?? 0), inline: true },
+    { name: '🟢 Удовлетворены', value: String(r.satisfied ?? 0), inline: true },
+    { name: '🔴 Отклонены', value: String(r.rejected ?? 0), inline: true },
+  ).setFooter({ text: stamp() });
+  return i.reply({ embeds: [e], ...EPH });
 }
 
 /* ---------- /senior_keywords: должности, жалобы на которых идут старшему составу ---------- */

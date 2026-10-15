@@ -10,6 +10,12 @@ export const SETUP_PANELS = [
   ['overdue', 'Просроченные дедлайны'], ['dm_blocked', 'Закрытые ЛС'], ['gform', 'Google Форма (ответы в канал)'],
   ['all', 'Все панели (Прокуратура)'],
 ];
+/** Типы записей панелей для /panel_delete */
+const PANEL_TYPES = [
+  ['complaints', 'Жалобы'], ['case_register', 'Уголовные дела (регистрация)'], ['case_review', 'Дела на проверку'],
+  ['case_request', 'Дела (Правительство)'], ['vacations', 'Отпуска и увольнения'], ['requests', 'Заявки руководству'],
+  ['mentoring', 'Кураторство'], ['mentoring_cards', 'Кураторство (карточки)'], ['overdue', 'Просроченные дедлайны'], ['dm_blocked', 'Закрытые ЛС'],
+].map(([value, name]) => ({ name, value }));
 const panelChoices = SETUP_PANELS.map(([value, name]) => ({ name, value }));
 
 const permChoices = Object.entries(PERMS).map(([value, [name]]) => ({ name, value }));
@@ -43,7 +49,10 @@ const list = [
   { name: 'panels_list', description: 'Показать все зарегистрированные панели' },
   {
     name: 'panel_delete', description: 'Удалить запись панели из базы данных',
-    options: [{ name: 'id', description: 'ID панели из /panels_list', type: O.Integer, required: true }],
+    options: [
+      str('panel_type', 'Какую панель удалить', true, { choices: PANEL_TYPES }),
+      { name: 'channel', description: 'Канал (если таких панелей несколько)', type: O.Channel, channel_types: [ChannelType.GuildText], required: false },
+    ],
   },
   { name: 'register_prosecutors', description: 'Сверить базу прокуроров по ролям сейчас (бот делает это сам)' },
   { name: 'sync_judges', description: 'Сверить базу судей по ролям сейчас (бот делает это сам)' },
