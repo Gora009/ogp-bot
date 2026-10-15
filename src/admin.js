@@ -87,19 +87,10 @@ function parsePanels(text) {
 }
 
 export async function setup(client, i) {
-  // пары «панель — канал»: panel+channel обязательны, panel2+channel2 … panel5+channel5 — по желанию
-  // (не указан channelN — панель ставится в основной канал)
   const main = i.options.getChannel('channel');
-  const pairs = [];
-  const bad = [];
-  for (const n of ['', '2', '3', '4', '5']) {
-    const value = i.options.getString(`panel${n}`);
-    if (!value) continue;
-    const parsed = parsePanels(value);
-    bad.push(...parsed.bad);
-    const chan = i.options.getChannel(`channel${n}`) ?? main;
-    for (const t of parsed.want) if (!pairs.some(([x]) => x === t)) pairs.push([t, chan]);
-  }
+  // одна панель — один канал («Все панели» раскрывается в несколько, все в этот канал)
+  const { want, bad } = parsePanels(i.options.getString('panel'));
+  const pairs = want.map((t) => [t, main]);
   await i.deferReply(EPH);
   // Google Форма — не панель с кнопками: присылаем скрипт и кнопку подключения
   if (pairs.length === 1 && pairs[0][0] === 'gform') return i.editReply(formSetupReply(pairs[0][1].id));

@@ -39,11 +39,6 @@ const list = [
     options: [
       str('panel', 'Панель', true, { choices: panelChoices }),
       { name: 'channel', description: 'Канал для панели', type: O.Channel, channel_types: [ChannelType.GuildText], required: true },
-      // ещё панели — каждая со своим каналом (без канала — в основной)
-      ...[2, 3, 4, 5].flatMap((n) => [
-        str(`panel${n}`, 'Ещё панель', false, { choices: panelChoices }),
-        { name: `channel${n}`, description: `Канал для panel${n} (не указан — основной канал)`, type: O.Channel, channel_types: [ChannelType.GuildText], required: false },
-      ]),
     ],
   },
   { name: 'panels_list', description: 'Показать все зарегистрированные панели' },
