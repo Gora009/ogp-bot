@@ -131,7 +131,7 @@ function pickerRows(tid, page, selId, pgId, extra = [], c = null, withAuto = fal
         .setPlaceholder(`Прокуроры (стр. ${page + 1}/${pages})`)
         .addOptions(...auto, ...slice.map((p) => ({
           label: (p.vacation ? '[Отпуск] ' : '') + p.name.slice(0, 90), value: p.user_id,
-          // должность по ролям (Советник ГП, ЗГП, Прокурор…), как в оригинале — под именем
+          // должность по ролям (СГП, ЗГП, Прокурор…), как в оригинале — под именем
           description: `${p.position ?? (p.senior ? 'Старший состав' : 'Прокурор')} • в работе: ${load.get(p.user_id) ?? 0}`,
         })))));
   }

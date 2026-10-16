@@ -11,20 +11,20 @@ const DEPARTMENT = /офис|огп|отдел|департамент|сотру
 /** Порядок важен: срабатывает первое подходящее правило (сначала самые конкретные должности) */
 export const RULES = [
   {
-    label: 'Генеральный прокурор', perms: ['full', 'senior'],
+    label: 'Генеральный прокурор', short: 'ГП', perms: ['full', 'senior'],
     test: (n) => !DEPARTMENT.test(n) && ((/генеральн\S* прокурор/.test(n) && !/заместител|советник|помощник|старш/.test(n)) || word('гп').test(n)),
   },
   {
-    label: 'Заместитель ГП', perms: ['approve', 'staff', 'monitor', 'assign', 'mentoring', 'senior'],
+    label: 'Заместитель ГП', short: 'ЗГП', perms: ['approve', 'staff', 'monitor', 'assign', 'mentoring', 'senior'],
     test: (n) => !DEPARTMENT.test(n) && (/заместител\S* генеральн/.test(n) || word('згп').test(n)),
   },
   {
-    label: 'Советник ГП', perms: ['approve', 'senior', 'mentoring'], // переназначать жалобы — от ЗГП
+    label: 'Советник ГП', short: 'СГП', perms: ['approve', 'senior', 'mentoring'], // переназначать жалобы — от ЗГП
     test: (n) => !DEPARTMENT.test(n) && (/советник\S* генеральн/.test(n) || word('сгп').test(n)),
   },
-  { label: 'Помощник прокурора', perms: ['prosecutor', 'case_register'], test: (n) => /помощник\S* прокурор/.test(n) },
-  { label: 'Прокурор', perms: ['prosecutor', 'case_register'], test: (n) => /прокурор/.test(n) && !DEPARTMENT.test(n) },
-  { label: 'Судья', perms: ['judge'], test: (n) => /(^| )судь/.test(n) },
+  { label: 'Помощник прокурора', short: 'Помощник прокурора', perms: ['prosecutor', 'case_register'], test: (n) => /помощник\S* прокурор/.test(n) },
+  { label: 'Прокурор', short: 'Прокурор', perms: ['prosecutor', 'case_register'], test: (n) => /прокурор/.test(n) && !DEPARTMENT.test(n) },
+  { label: 'Судья', short: 'Судья', perms: ['judge'], test: (n) => /(^| )судь/.test(n) },
 ];
 
 export const isVacationRole = (n) => n === 'отпуск' || n === 'в отпуске' || /^отпуск /.test(n);
@@ -37,7 +37,8 @@ export const ruleFor = (roleName) => RULES.find((r) => r.test(norm(roleName))) ?
  */
 export const positionOf = (member) => {
   const names = [...(member?.roles?.cache?.values?.() ?? [])].map((r) => norm(r.name));
-  return RULES.find((rule) => names.some((n) => rule.test(n)))?.label ?? null;
+  // коротко, как принято в ОГП: ГП, ЗГП, СГП, Прокурор…
+  return RULES.find((rule) => names.some((n) => rule.test(n)))?.short ?? null;
 };
 /** Права, которые даёт само название роли */
 export const namePerms = (roleName) => ruleFor(roleName)?.perms ?? [];

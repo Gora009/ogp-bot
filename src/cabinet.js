@@ -45,6 +45,33 @@ function position(member) {
 }
 
 const personName = (uid) => db.prepare('SELECT name FROM prosecutors WHERE user_id=?').get(uid)?.name ?? null;
+/**
+ * Имя человека для графиков и списков: ник на сервере (из Discord), иначе имя в базе, иначе имя аккаунта.
+ * Без приставки должности: «ГП | Kai» → «Kai». Подгружается заранее — render() синхронный.
+ */
+async function loadNames(i, ids) {
+  const names = new Map();
+  for (const id of new Set(ids)) {
+    const m = i.guild ? await i.guild.members.fetch(id).catch(() => null) : null;
+    const u = m ? null : await i.client?.users.fetch(id).catch(() => null);
+    const raw = m?.displayName ?? personName(id) ?? u?.globalName ?? u?.username ?? 'Сотрудник';
+    names.set(id, raw.split('|').pop().trim() || raw);
+  }
+  return names;
+}
+/** Чьи имена понадобятся разделу: исполнители на графике нагрузки и кто сейчас в отпуске */
+function namesNeeded(view, period) {
+  const n = nowTs();
+  if (view === 'load') {
+    return db.prepare(`SELECT assignee_id id FROM complaints WHERE assignee_id IS NOT NULL AND status!='old' AND created_ts>=?
+                        GROUP BY assignee_id ORDER BY SUM(status='closed') + SUM(status IN ('assigned','accepted')) DESC LIMIT 6`)
+      .all(since(period)).map((r) => r.id);
+  }
+  if (view === 'vacations') {
+    return db.prepare(`SELECT user_id id FROM vacations WHERE status='approved' AND start_ts<=? AND end_ts>=?`).all(n, n).map((r) => r.id);
+  }
+  return [];
+}
 
 /** Картинка-график (Chart.js через quickchart.io) — как в оригинале */
 function chartUrl(config) {
@@ -62,7 +89,7 @@ function vacDot(v, n = nowTs()) {
   return v.end_ts < n ? '✔️' : '✅';
 }
 
-export function render(i, view = 'main', period = 'all', p = 0) {
+export function render(i, view = 'main', period = 'all', p = 0, names = new Map()) {
   const uid = i.user.id;
   const name = i.member?.displayName ?? i.user.globalName ?? i.user.username;
   const e = new EmbedBuilder().setColor(COLOR);
@@ -126,7 +153,7 @@ export function render(i, view = 'main', period = 'all', p = 0) {
         type: 'bar',
         data: {
           // только имя человека: «ГП | Kai» → «Kai»
-          labels: per.map((r) => clip((personName(r.id) ?? 'Прокурор').split('|').pop().trim(), 14)),
+          labels: per.map((r) => clip(names.get(r.id) ?? 'Сотрудник', 14)),
           datasets: [
             { label: 'Актив', data: per.map((r) => r.active), backgroundColor: 'rgb(254,231,92)' },
             { label: 'Закр', data: per.map((r) => r.closed), backgroundColor: 'rgb(87,242,135)' },
@@ -145,7 +172,7 @@ export function render(i, view = 'main', period = 'all', p = 0) {
                                  SUM(CASE WHEN status='approved' THEN (end_ts-start_ts)/86400+1 ELSE 0 END) days
                           FROM vacations WHERE created_ts>=?`).get(n, n, n, n, from);
     const now = db.prepare(`SELECT user_id FROM vacations WHERE status='approved' AND start_ts<=? AND end_ts>=?`).all(n, n)
-      .map((v) => personName(v.user_id) ?? `<@${v.user_id}>`);
+      .map((v) => names.get(v.user_id) ?? `<@${v.user_id}>`);
     e.setTitle('📈 Статистика отпусков').setDescription([
       `📈 **Период:** ${PERIODS[period]}`, '',
       '**Статистика отпусков:**',
@@ -180,10 +207,15 @@ function withLogo(payload, view) {
 
 export const cabinet = (client, i) => i.reply({ ...withLogo(render(i), 'main'), ...EPH });
 
-export function handleCab(client, i) {
+export async function handleCab(client, i) {
   const [, view, period, p, flag] = i.customId.split(':');
   // Неделя / Месяц / Всё — только в «Нагрузке» и «Отпусках»
   if (flag === 'f' && !STATS.has(view)) return i.reply({ content: '❌ Фильтр доступен только для статистики.', ...EPH });
   const v = ['main', 'complaints', 'cases', 'vacation', 'load', 'vacations'].includes(view) ? view : 'main';
-  return i.update(withLogo(render(i, v, Object.hasOwn(PERIODS, period) ? period : 'all', Number(p) || 0), v));
+  const per = Object.hasOwn(PERIODS, period) ? period : 'all';
+  // имена людей из Discord подгружаются заранее — ответ на нажатие должен уйти за 3 секунды, поэтому сначала deferUpdate
+  const ids = namesNeeded(v, per);
+  if (!ids.length) return i.update(withLogo(render(i, v, per, Number(p) || 0), v));
+  await i.deferUpdate();
+  return i.editReply(withLogo(render(i, v, per, Number(p) || 0, await loadNames(i, ids)), v));
 }
