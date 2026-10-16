@@ -2,7 +2,7 @@ import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, EmbedB
 import { fileURLToPath } from 'node:url';
 import { db } from './db.js';
 import { STATUS as CASE_STATUS } from './cases.js';
-import { RULES, norm } from './roles.js';
+import { positionOf } from './roles.js';
 import { COLOR, EPH, isOnVacation, mskDate, nowTs, stamp } from './util.js';
 
 /**
@@ -38,12 +38,10 @@ function buttons(view, period, p) {
   ];
 }
 
-/** Должность по ролям: самая высокая из известных (ГП → ЗГП → СГП → …), иначе старшая роль */
+/** Должность по ролям (как в списке выбора прокурора), иначе старшая роль */
 function position(member) {
-  const names = [...(member?.roles?.cache?.values?.() ?? [])].map((r) => r.name);
-  for (const rule of RULES) if (names.some((n) => rule.test(norm(n)))) return rule.label;
   const top = member?.roles?.highest;
-  return top && top.name !== '@everyone' ? top.name : 'Прокурор';
+  return positionOf(member) ?? (top && top.name !== '@everyone' ? top.name : 'Прокурор');
 }
 
 const personName = (uid) => db.prepare('SELECT name FROM prosecutors WHERE user_id=?').get(uid)?.name ?? null;
@@ -127,7 +125,8 @@ export function render(i, view = 'main', period = 'all', p = 0) {
       e.setImage(chartUrl({
         type: 'bar',
         data: {
-          labels: per.map((r) => clip(personName(r.id) ?? 'Прокурор', 10)),
+          // только имя человека: «ГП | Kai» → «Kai»
+          labels: per.map((r) => clip((personName(r.id) ?? 'Прокурор').split('|').pop().trim(), 14)),
           datasets: [
             { label: 'Актив', data: per.map((r) => r.active), backgroundColor: 'rgb(254,231,92)' },
             { label: 'Закр', data: per.map((r) => r.closed), backgroundColor: 'rgb(87,242,135)' },

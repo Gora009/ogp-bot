@@ -1,12 +1,11 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
 import { db } from './db.js';
-import { destinations, editAll, mirrorByMessage, mirrorsOf, pingIn, sendAll } from './mirror.js';
-import { roleIdsWith } from './access.js';
+import { destinations, editAll, mirrorByMessage, mirrorsOf, sendAll } from './mirror.js';
 import { C, msk, nowTs, stamp } from './util.js';
 
 /**
- * Канал «Просроченные дедлайны» (/setup): карточка на каждую просрочку с упоминанием ГП и ЗГП
- * (роли с «Полным доступом» и «Мониторингом») и кнопками «Продлить» / «Закрыть жалобу».
+ * Канал «Просроченные дедлайны» (/setup): карточка на каждую просрочку с упоминанием ответственных за дедлайны
+ * и кнопками «Продлить» / «Закрыть жалобу».
  * Когда жалобу закрыли или дедлайн продлили, карточка обновляется, а кнопки с неё убираются.
  */
 db.exec(`CREATE TABLE IF NOT EXISTS overdue_alerts (
@@ -25,7 +24,8 @@ const nameOf = (id) => db.prepare('SELECT name FROM prosecutors WHERE user_id=?'
 function alertEmbed(c, kind, resolved = null) {
   const lines = [
     `**Жалоба:** №${c.number ?? '?'}`,
-    `**Исполнитель:** ${c.assignee_id ? `${nameOf(c.assignee_id) ?? ''} (<@${c.assignee_id}>)`.trim() : '—'}`,
+    // «ПСК | Riley Zakonov (@…)»; имени в базе нет — только упоминание, без пустых скобок
+    `**Исполнитель:** ${!c.assignee_id ? '—' : nameOf(c.assignee_id) ? `${nameOf(c.assignee_id)} (<@${c.assignee_id}>)` : `<@${c.assignee_id}>`}`,
     `**Тип:** ${KIND[kind]}`,
     `**Ссылка:** [Форум](${c.url})`,
   ];
@@ -41,13 +41,10 @@ const alertButtons = (c, kind) => [
     .setLabel('Закрыть жалобу').setEmoji('✅').setStyle(ButtonStyle.Success)),
 ];
 
-/** Кого упомянуть: ГП и ЗГП (права «Полный доступ» и «Мониторинг и дедлайны») и ответственные за дедлайны.
- *  ch — канал, куда уходит карточка: роли берём только с его сервера. */
+/** Кого упомянуть — только ответственных за дедлайны (люди, без ролей), как в оригинале.
+ *  Список — /settings → Жалобы или /deadline_responsible. */
 export function alertPing(ch = null) {
-  const roleIds = [...new Set([...roleIdsWith('full'), ...roleIdsWith('monitor')])];
-  const roles = ch ? pingIn(ch, roleIds) : roleIds.map((r) => `<@&${r}>`).join(' ');
-  const users = db.prepare('SELECT user_id FROM deadline_responsible').all().map((r) => `<@${r.user_id}>`);
-  return [roles, ...users].filter(Boolean).join(' ');
+  return db.prepare('SELECT user_id FROM deadline_responsible').all().map((r) => `<@${r.user_id}>`).join(' ');
 }
 
 /** Публикует карточку просрочки. false — канал не настроен (тогда уведомляем по-старому, в ЛС). */
@@ -69,12 +66,13 @@ export async function postAlert(client, c, kind) {
  * Отмечает карточки просрочек по жалобе как решённые: убирает кнопки и дописывает, что произошло.
  * kind — только этого типа (продление), без него — все (жалоба закрыта).
  */
-export async function resolveAlerts(client, c, text, kind = null) {
+export async function resolveAlerts(client, c, text, kind = null, card = null) {
   const rows = db.prepare(`SELECT * FROM overdue_alerts WHERE thread_id=? AND resolved IS NULL${kind ? ' AND kind=?' : ''}`)
     .all(...(kind ? [c.thread_id, kind] : [c.thread_id]));
   for (const r of rows) {
     db.prepare('UPDATE overdue_alerts SET resolved=? WHERE id=?').run(text, r.id);
-    const payload = { embeds: [alertEmbed(c, r.kind, text)], components: [] };
+    // card — карточка закрытой жалобы («🟢 Жалоба №… — Удовлетворена»): ею заменяем карточку просрочки
+    const payload = { embeds: [card ?? alertEmbed(c, r.kind, text)], components: [] };
     if (mirrorsOf('alert', r.id).length) { await editAll(client, 'alert', r.id, payload); continue; }
     try {
       const msg = await (await client.channels.fetch(r.channel_id)).messages.fetch(r.message_id);

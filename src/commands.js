@@ -5,7 +5,7 @@ const str = (name, description, required = true, extra = {}) => ({ name, descrip
 
 /** Панели /setup: [тип, название]. Встроенный список Discord — открывается мгновенно, без запроса к боту */
 export const SETUP_PANELS = [
-  // [тип, короткое название, что появится в канале — для понятного списка в /setup]
+  // [тип, название в списке /setup, что появится в канале (для справки в коде)]
   ['complaints', 'Жалобы', 'новые жалобы с форума, выбор прокурора'],
   ['cases', 'Уголовные дела', 'кнопка «Зарегистрировать дело» для прокуроров'],
   ['case_review', 'Дела на проверку', 'новые дела для решения ЗГП/ГП и судей'],
@@ -24,7 +24,7 @@ const PANEL_TYPES = [
   ['case_req_cards', 'Запросы дел'], ['case_request', 'Дела (Правительство)'], ['vacations', 'Отпуска и увольнения'], ['requests', 'Заявки руководству'],
   ['mentoring', 'Кураторство'], ['mentoring_cards', 'Кураторство (карточки)'], ['overdue', 'Просроченные дедлайны'], ['dm_blocked', 'Закрытые ЛС'],
 ].map(([value, name]) => ({ name, value }));
-const panelChoices = SETUP_PANELS.map(([value, name, hint]) => ({ name: `${name} — ${hint}`.slice(0, 100), value }));
+const panelChoices = SETUP_PANELS.map(([value, name]) => ({ name, value })); // коротко, без пояснений — так читается легче
 
 const permChoices = Object.entries(PERMS).map(([value, [name]]) => ({ name, value }));
 const target = [

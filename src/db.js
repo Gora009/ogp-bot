@@ -57,7 +57,7 @@ for (const [table, col] of [
   ['complaints', 'result TEXT'], ['complaints', 'violator TEXT'], ['complaints', 'restricted INTEGER NOT NULL DEFAULT 0'],
   ['complaints', 'forum_checked_ts INTEGER'], ['complaints', 'applicant TEXT'],
   ['complaints', 'remind_stage INTEGER NOT NULL DEFAULT 0'], ['complaints', 'last_nag_ts INTEGER'],
-  ['prosecutors', 'senior INTEGER NOT NULL DEFAULT 0'],
+  ['prosecutors', 'senior INTEGER NOT NULL DEFAULT 0'], ['prosecutors', 'position TEXT'],
   ['cases', 'decided_ts INTEGER'], ['cases', 'action TEXT'], ['cases', 'action_value TEXT'], ['cases', 'action_by TEXT'],
   ['mentorships', 'cancel_reason TEXT'],
   ['vacations', 'decided_by TEXT'], ['vacations', 'decided_ts INTEGER'], ['vacations', 'reject_reason TEXT'],

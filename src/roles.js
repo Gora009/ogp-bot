@@ -31,5 +31,13 @@ export const isVacationRole = (n) => n === 'отпуск' || n === 'в отпу�
 
 /** Должность по названию роли (или null) */
 export const ruleFor = (roleName) => RULES.find((r) => r.test(norm(roleName))) ?? null;
+/**
+ * Должность участника по его ролям — самая высокая из известных (ГП → ЗГП → СГП → Помощник → Прокурор → Судья).
+ * У советника с ролью «Прокурор» будет «Советник ГП», а не ЗГП. null — ни одна роль не похожа на должность.
+ */
+export const positionOf = (member) => {
+  const names = [...(member?.roles?.cache?.values?.() ?? [])].map((r) => norm(r.name));
+  return RULES.find((rule) => names.some((n) => rule.test(n)))?.label ?? null;
+};
 /** Права, которые даёт само название роли */
 export const namePerms = (roleName) => ruleFor(roleName)?.perms ?? [];

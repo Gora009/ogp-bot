@@ -129,7 +129,8 @@ const reviewComponents = (uin) => {
       new StringSelectMenuBuilder().setCustomId(`case:act:${uin}`).setPlaceholder('Действие по одобренному делу...')
         .addOptions(Object.entries(ACTIONS).map(([value, a]) => ({ label: a.label, value, emoji: a.emoji }))))];
   }
-  if (c?.status === 'approved') return [];
+  // решение принято (одобрено, отклонено, на доработке) — менять его нельзя, выбор убирается
+  if (c?.status !== 'pending') return [];
   return [new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder().setCustomId(`case:dec:${uin}`).setPlaceholder('Выберите решение...')
       .addOptions(
@@ -386,7 +387,7 @@ async function finalize(client, i, c, status, comment, action = null, value = nu
 }
 
 /**
- * Одобрение — как в оригинале, в два шага: «Одобрить» → под карточкой выбор действия (и «Отмена»);
+ * Одобрение — как в оригинале, в два шага: «Одобрить» → под карточкой выбор действия и «◀ Назад» (вернуться к выбору решения);
  * штраф спрашивает сумму отдельной формой. Дело одобряется и прокурору уходит ЛС только после выбора действия.
  */
 const approveRows = (uin) => [
@@ -394,7 +395,7 @@ const approveRows = (uin) => [
     new StringSelectMenuBuilder().setCustomId(`case:apa:${uin}`).setPlaceholder('Действие по одобренному делу...')
       .addOptions(Object.entries(ACTIONS).map(([value, a]) => ({ label: a.label, value, emoji: a.emoji })))),
   new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`case:apx:${uin}`).setLabel('Отмена').setStyle(ButtonStyle.Secondary)),
+    new ButtonBuilder().setCustomId(`case:apx:${uin}`).setLabel('◀ Назад').setStyle(ButtonStyle.Secondary)),
 ];
 const fineModal = (id) => new ModalBuilder().setCustomId(id).setTitle('Назначение штрафа').addComponents(
   new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('sum').setLabel('Сумма штрафа ($)')
@@ -418,6 +419,8 @@ async function decide(client, i) {
   const c = getCase(i.customId.split(':')[2]);
   if (!c) return i.reply({ content: 'Дело не найдено.', ...EPH });
   if (!canDecide(i)) return i.reply({ content: '⛔ Нет прав.', ...EPH });
+  // решение уже принято (старая карточка со списком) — не меняем, только убираем выбор с карточки
+  if (c.status !== 'pending') return i.update({ embeds: [reviewEmbed(c)], components: reviewComponents(c.uin) });
   const v = i.values[0];
   if (v === 'approve') return i.update({ components: approveRows(c.uin) });
   if (v === 'rework') {
@@ -434,6 +437,7 @@ async function submitRework(client, i) {
   const c = getCase(i.customId.split(':')[2]);
   if (!c) return i.reply({ content: 'Дело не найдено.', ...EPH });
   if (!canDecide(i)) return i.reply({ content: '⛔ Нет прав.', ...EPH });
+  if (c.status !== 'pending') return i.reply({ content: 'По делу уже принято решение.', ...EPH });
   const f = await finalize(client, i, c, 'rework', i.fields.getTextInputValue('comment').trim());
   const payload = { embeds: [reviewEmbed(f)], components: reviewComponents(f.uin) };
   return i.isFromMessage() ? i.update(payload) : i.reply({ ...payload, ...EPH });

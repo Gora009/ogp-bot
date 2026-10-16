@@ -6,7 +6,7 @@ import {
 import { fileURLToPath } from 'node:url';
 import { db } from './db.js';
 import { C, COLOR, EPH, cfg, stamp } from './util.js';
-import { namePerms } from './roles.js';
+import { namePerms, positionOf } from './roles.js';
 
 db.exec(`CREATE TABLE IF NOT EXISTS access (
   target_id TEXT NOT NULL, kind TEXT NOT NULL, perm TEXT NOT NULL, PRIMARY KEY (target_id, perm))`);
@@ -151,12 +151,14 @@ export const isSeniorMember = (m) => memberHas(m, 'senior') || memberHas(m, 'app
 export function syncProsecutorRecord(member) {
   if (!member?.roles?.cache || member.user?.bot) return;
   const senior = isSeniorMember(member) ? 1 : 0;
-  const row = db.prepare('SELECT name, senior FROM prosecutors WHERE user_id=?').get(member.id);
+  const row = db.prepare('SELECT name, senior, position FROM prosecutors WHERE user_id=?').get(member.id);
   if (senior || memberHas(member, 'prosecutor')) {
     const name = member.displayName ?? member.user?.username ?? member.id;
-    if (!row || row.name !== name || row.senior !== senior) {
-      db.prepare(`INSERT INTO prosecutors(user_id,name,senior) VALUES(?,?,?)
-                  ON CONFLICT(user_id) DO UPDATE SET name=excluded.name, senior=excluded.senior`).run(member.id, name, senior);
+    const position = positionOf(member);
+    if (!row || row.name !== name || row.senior !== senior || row.position !== position) {
+      db.prepare(`INSERT INTO prosecutors(user_id,name,senior,position) VALUES(?,?,?,?)
+                  ON CONFLICT(user_id) DO UPDATE SET name=excluded.name, senior=excluded.senior, position=excluded.position`)
+        .run(member.id, name, senior, position);
     }
   } else if (row && hasRulesFor('prosecutor')) {
     db.prepare('DELETE FROM prosecutors WHERE user_id=?').run(member.id);

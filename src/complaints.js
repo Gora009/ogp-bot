@@ -131,7 +131,8 @@ function pickerRows(tid, page, selId, pgId, extra = [], c = null, withAuto = fal
         .setPlaceholder(`Прокуроры (стр. ${page + 1}/${pages})`)
         .addOptions(...auto, ...slice.map((p) => ({
           label: (p.vacation ? '[Отпуск] ' : '') + p.name.slice(0, 90), value: p.user_id,
-          description: `${p.senior ? 'Старший состав' : 'Прокурор'} • в работе: ${load.get(p.user_id) ?? 0}`,
+          // должность по ролям (Советник ГП, ЗГП, Прокурор…), как в оригинале — под именем
+          description: `${p.position ?? (p.senior ? 'Старший состав' : 'Прокурор')} • в работе: ${load.get(p.user_id) ?? 0}`,
         })))));
   }
   rows.push(new ActionRowBuilder().addComponents(
@@ -143,10 +144,14 @@ function pickerRows(tid, page, selId, pgId, extra = [], c = null, withAuto = fal
   return rows;
 }
 
-const unassignedRows = (c, page = 0) => pickerRows(c.thread_id, page, 'c:sel', 'c:pg', [
-  new ButtonBuilder().setCustomId(`c:auto:${c.thread_id}`).setLabel('🎲 Авто').setStyle(ButtonStyle.Primary),
-  new ButtonBuilder().setCustomId(`c:ref:${c.thread_id}:${page}`).setLabel('🔄 Обновить список').setStyle(ButtonStyle.Secondary),
-], c);
+// как в оригинале: список, под ним «Назад / Вперёд / Авто», и ниже отдельной строкой «Обновить список»
+const unassignedRows = (c, page = 0) => [
+  ...pickerRows(c.thread_id, page, 'c:sel', 'c:pg', [
+    new ButtonBuilder().setCustomId(`c:auto:${c.thread_id}`).setLabel('🎲 Авто').setStyle(ButtonStyle.Primary),
+  ], c),
+  new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`c:ref:${c.thread_id}:${page}`).setLabel('🔄 Обновить список').setStyle(ButtonStyle.Secondary)),
+];
 
 function actionRows(c) {
   const accepted = c.status === 'accepted';
@@ -302,10 +307,7 @@ async function handleComplaint(client, i) {
     if (i.user.id !== c.assignee_id) return i.reply({ content: '⛔ Нет прав: принять жалобу может только назначенный исполнитель.', ...EPH });
     if (c.status !== 'assigned') return i.update(messagePayload(c));
     db.prepare(`UPDATE complaints SET status='accepted', accepted_ts=? WHERE thread_id=?`).run(nowTs(), c.thread_id);
-    await i.update(messagePayload(getComplaint(c.thread_id)));
-    // карточка «просрочен дедлайн ответа» в канале просрочек — решена
-    await resolveAlerts(client, getComplaint(c.thread_id), `✅ Жалоба принята — <@${i.user.id}>`, 'respond');
-    return;
+    return i.update(messagePayload(getComplaint(c.thread_id)));
   }
 
   // --- переназначить ---
@@ -373,7 +375,7 @@ async function handleComplaint(client, i) {
     } else {
       await (i.isFromMessage() ? i.update(messagePayload(f)) : i.reply({ ...messagePayload(f), ...EPH }));
     }
-    await resolveAlerts(client, f, closedText(i.user.id));
+    await resolveAlerts(client, f, closedText(i.user.id), null, complaintEmbed(f));
     return;
   }
 

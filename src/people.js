@@ -1,6 +1,7 @@
 import { GatewayIntentBits } from 'discord.js';
 import { db } from './db.js';
 import { hasRulesFor, isSeniorMember, memberHas, syncProsecutorRecord } from './access.js';
+import { positionOf } from './roles.js';
 
 /**
  * Базы прокуроров и судей бот ведёт сам — /register_prosecutors и /sync_judges больше не нужны:
@@ -23,7 +24,7 @@ export async function syncPeople(client) {
     const members = await g.members.fetch().catch((e) => { console.error(`Участники ${g.name}:`, e.message); return null; });
     if (!members) return null; // не удалось прочитать сервер — ничего не удаляем
     for (const m of members.values()) {
-      if (isProsecutorMember(m)) pros.set(m.id, { name: m.displayName, senior: isSeniorMember(m) ? 1 : 0 });
+      if (isProsecutorMember(m)) pros.set(m.id, { name: m.displayName, senior: isSeniorMember(m) ? 1 : 0, position: positionOf(m) });
       if (isJudgeMember(m)) judges.set(m.id, m.displayName);
     }
   }
@@ -31,9 +32,9 @@ export async function syncPeople(client) {
   let removed = 0;
   // права «Прокурор» ещё никому не выданы — базу не трогаем, чтобы не стереть её по ошибке
   if (hasRulesFor('prosecutor') || hasRulesFor('senior') || hasRulesFor('approve') || hasRulesFor('full')) {
-    const up = db.prepare(`INSERT INTO prosecutors(user_id,name,senior) VALUES(?,?,?)
-                           ON CONFLICT(user_id) DO UPDATE SET name=excluded.name, senior=excluded.senior`);
-    for (const [id, p] of pros) up.run(id, p.name, p.senior);
+    const up = db.prepare(`INSERT INTO prosecutors(user_id,name,senior,position) VALUES(?,?,?,?)
+                           ON CONFLICT(user_id) DO UPDATE SET name=excluded.name, senior=excluded.senior, position=excluded.position`);
+    for (const [id, p] of pros) up.run(id, p.name, p.senior, p.position);
     for (const r of db.prepare('SELECT user_id FROM prosecutors').all()) {
       if (!pros.has(r.user_id)) { db.prepare('DELETE FROM prosecutors WHERE user_id=?').run(r.user_id); removed++; }
     }

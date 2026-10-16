@@ -1,7 +1,7 @@
 import { EmbedBuilder } from 'discord.js';
 import { db, getSetting, setSetting } from './db.js';
 import { fetchThreadState, fetchThreads } from './forum.js';
-import { assign, getComplaint, pickAuto, refreshMessage, respondByOf } from './complaints.js';
+import { assign, complaintEmbed, getComplaint, pickAuto, refreshMessage, respondByOf } from './complaints.js';
 import { closedText, postAlert, resolveAlerts } from './alerts.js';
 import { C, listProsecutors, msk, nowTs, sendDM, stamp } from './util.js';
 import { conf } from './config.js';
@@ -21,12 +21,6 @@ const left = (sec) => {
   const h = Math.max(0, Math.round(sec / 3600));
   return h >= 24 && h % 24 === 0 ? `${h / 24} ${h / 24 === 1 ? 'сутки' : 'суток'}` : `${h} ч`;
 };
-const reminderEmbed = (c, stage) =>
-  new EmbedBuilder().setColor(C.warn).setTitle(`⏰ Напоминание о жалобе${stage > 1 ? ' (повторное)' : ''}`)
-    .setDescription(`Жалоба **№${c.number ?? '?'}** ещё не закрыта.\n\n` +
-      `До дедлайна закрытия осталось **${left(c.close_by - nowTs())}** — до ${msk(c.close_by)} MSK.\n\n` +
-      `**Ссылка:** [Открыть на форуме](${c.url})`)
-    .setFooter({ text: stamp() });
 /** В журнал сервера: кому и что ушло (видно в journalctl -u ogp-bot) */
 const logSent = (what, userId, ok) => console.log(`${what} → ${userId}: ${ok ? 'доставлено' : 'НЕ доставлено (закрыты ЛС или бот заблокирован)'}`);
 
@@ -70,12 +64,10 @@ async function applyState(client, id, { locked, replies }, res) {
     db.prepare(`UPDATE complaints SET status='closed', closed_ts=?, replies=?, forum_checked_ts=? WHERE thread_id=?`).run(now, replies, now, id);
     const c = getComplaint(id);
     await refreshMessage(client, c);
-    await resolveAlerts(client, c, closedText(null));
+    await resolveAlerts(client, c, closedText(null), null, complaintEmbed(c));
     res.closed++;
   } else {
     db.prepare('UPDATE complaints SET replies=?, forum_checked_ts=? WHERE thread_id=?').run(replies, now, id);
-    // старые карточки «просрочен ответ» (до отказа от 12-часового срока) закрываем, когда ответ появился
-    if (replies > 0) await resolveAlerts(client, getComplaint(id), '✅ Ответ на форуме дан', 'respond');
   }
 }
 
@@ -143,16 +135,8 @@ export async function checkDeadlines(client, forumUrl, { force = false } = {}) {
       continue;
     }
     // флаги ставятся до отправки — параллельный проход (/check_deadlines) не продублирует уведомления
-    // 1) напоминания исполнителю: за 48 и за 24 часа до дедлайна (через 24 и 48 ч после подачи жалобы)
-    // напоминания задаются «через N ч после подачи» — переводим в «за M ч до дедлайна», чтобы продление их сдвигало
-    const before = conf.reminderHours().map((h) => conf.deadlineHours() - h).filter((h) => h > 0);
-    const stage = before.filter((h) => now >= f.close_by - h * 3600).length;
-    if (f.close_by > now && stage > (f.remind_stage ?? 0)) {
-      db.prepare('UPDATE complaints SET remind_stage=? WHERE thread_id=?').run(stage, f.thread_id);
-      logSent(`Напоминание ${stage} по жалобе №${f.number}`, f.assignee_id, await sendDM(client, f.assignee_id, { embeds: [reminderEmbed(f, stage)] }));
-      res.reminders++;
-      continue;
-    }
+    // 1) до дедлайна закрытия исполнителю ничего не пишем — как в оригинале: только «просрочен дедлайн ответа»
+    // (выше) и просрочка закрытия (ниже)
     if (f.close_by > now) continue;
 
     // 2) дедлайн прошёл — исполнителю и старшему составу, карточка в канал просрочек

@@ -138,7 +138,7 @@ export async function setup(client, i) {
     if (panel === 'overdue') {
       await putPanel(client, 'overdue', ch.id);
       done.push(['⏰ Просроченные дедлайны', `Карточки просрочек → <#${ch.id}>`]);
-      notes.push(`Упоминаются: ${alertPing(ch) || 'пока никто — у ролей ГП и ЗГП на этом сервере должны быть понятные названия или права в `/settings` → Доступ'}`);
+      notes.push(`Упоминаются ответственные за дедлайны: ${alertPing(ch) || 'пока никто — добавьте их в `/settings` → Жалобы или `/deadline_responsible`'}`);
     }
     if (panel === 'dm_blocked') {
       await putPanel(client, 'dm_blocked', ch.id);
@@ -415,10 +415,9 @@ export async function deadlineResponsible(client, i) {
 
 export async function checkResponsible(client, i) {
   await i.deferReply(EPH);
-  // ответственные: список из /deadline_responsible и все, у кого право «Мониторинг и дедлайны» (по роли — ЗГП)
+  // ответственные — список из /settings → Жалобы и /deadline_responsible; их и тегает канал просрочек
   const ids = new Set(db.prepare('SELECT user_id FROM deadline_responsible').all().map((r) => r.user_id));
   const members = await i.guild.members.fetch().catch(() => null);
-  for (const m of members?.values() ?? []) if (!m.user.bot && memberHas(m, 'monitor')) ids.add(m.id);
   const lines = [];
   for (const id of ids) {
     const m = members?.get(id) ?? await i.guild.members.fetch(id).catch(() => null);
@@ -427,7 +426,7 @@ export async function checkResponsible(client, i) {
   }
   const e = new EmbedBuilder().setColor(COLOR).setTitle('⏰ Проверка ответственных')
     .setDescription(`⏰ **Ответственные за мониторинг дедлайнов:**\n\n${lines.join('\n') ||
-      'Никого нет. Добавьте: \`/deadline_responsible\` или выдайте роли право «Мониторинг и дедлайны» в \`/settings\` → Доступ.'}`)
+      'Никого нет. Добавьте в \`/settings\` → Жалобы или командой \`/deadline_responsible\`.'}`)
     .setFooter({ text: stamp() });
   return i.editReply({ embeds: [e] });
 }
