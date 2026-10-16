@@ -1,5 +1,5 @@
 import {
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, ContainerBuilder, GatewayIntentBits, MessageFlags, ModalBuilder, RoleSelectMenuBuilder,
+  ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, ContainerBuilder, GatewayIntentBits, MessageFlags, ModalBuilder, RoleSelectMenuBuilder,
   SeparatorBuilder, StringSelectMenuBuilder, TextDisplayBuilder, TextInputBuilder, TextInputStyle, UserSelectMenuBuilder,
 } from 'discord.js';
 import { db, getSetting, setSetting } from './db.js';
@@ -14,6 +14,9 @@ import { autosetup } from './autosetup.js';
 import { faq } from './faq.js';
 import { poll } from './complaints.js';
 import { syncPeople } from './people.js';
+import { LOG_DIR, logFile } from './log.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
 /**
  * /settings — все настройки бота в одном окне, кроме панелей (их размещают /setup, /panels_list, /panel_delete).
@@ -216,7 +219,7 @@ function systemView(client, msg = '') {
     ]), [
       ...nav('system'),
       row(btn('set:scope', global ? 'Сделать команды серверными' : 'Сделать команды глобальными'),
-        btn('set:m:pg', 'Сервер Прокуратуры'), btn('set:m:guild', 'Разрешить сервер')),
+        btn('set:m:pg', 'Сервер Прокуратуры'), btn('set:m:guild', 'Разрешить сервер'), btn('set:logs', 'Журнал за сегодня')),
       ...(storedGuilds().length > 1 ? [row(new StringSelectMenuBuilder().setCustomId('set:gdel').setPlaceholder('Запретить сервер (бот выйдет)')
         .addOptions(storedGuilds().slice(0, 25).map((id) => ({ label: (client.guilds.cache.get(id)?.name ?? id).slice(0, 100), value: id, description: id }))))] : []),
       ...(forms.length ? [row(new StringSelectMenuBuilder().setCustomId('set:fdel').setPlaceholder('Отключить Google Форму')
@@ -366,6 +369,20 @@ export async function handleSettings(client, i) {
   if (action === 'auto') {
     if (!can(i, 'full')) return i.reply({ content: '⛔ Автонастройку запускает руководство с «Полным доступом».', ...EPH });
     return autosetup(client, i);
+  }
+  // журнал бота за сегодня — файлом, только «Полный доступ» (в нём действия всех сотрудников)
+  if (action === 'logs') {
+    if (!can(i, 'full')) return i.reply({ content: '⛔ Журнал доступен только руководству с «Полным доступом».', ...EPH });
+    const file = logFile();
+    if (!fs.existsSync(file)) return i.reply({ content: 'За сегодня в журнале пока пусто.', ...EPH });
+    // Discord принимает файлы до 8 МБ — если журнал больше, присылаем его конец
+    const MAX = 8 * 1024 * 1024;
+    const size = fs.statSync(file).size;
+    const data = size > MAX ? fs.readFileSync(file).subarray(size - MAX) : fs.readFileSync(file);
+    return i.reply({
+      content: `Журнал за сегодня${size > MAX ? ' (последние 8 МБ)' : ''}. Прошлые дни — на сервере: \`/opt/ogp-bot/${LOG_DIR}\`.`,
+      files: [new AttachmentBuilder(data, { name: path.basename(file) })], ...EPH,
+    });
   }
   if (action === 'scope') {
     await i.deferUpdate();

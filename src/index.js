@@ -21,6 +21,7 @@ import { cabinet, handleCab } from './cabinet.js';
 import { EPH, prettyPayload } from './util.js';
 import { installLogo } from './logo.js';
 import { acquireLock } from './lock.js';
+import { installLog, logAction } from './log.js';
 import { analyze, handleDoc } from './analyze.js';
 
 const { DISCORD_TOKEN } = process.env;
@@ -31,6 +32,7 @@ if (!DISCORD_TOKEN) throw new Error('Заполните DISCORD_TOKEN в .env');
 process.on('unhandledRejection', (e) => console.error('unhandledRejection:', e));
 process.on('uncaughtException', (e) => console.error('uncaughtException:', e));
 
+installLog(); // журнал на сервере: data/logs (см. src/log.js)
 acquireLock();
 installLogo();
 
@@ -157,6 +159,7 @@ function boot(useMembers) {
   });
 
   client.on('interactionCreate', async (i) => {
+    logAction(i); // в журнал: кто что нажал или вызвал
     // замер скорости: сколько нажатие шло от Discord до бота и сколько бот его обрабатывал
     const got = Date.now();
     const done = () => {
