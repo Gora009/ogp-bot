@@ -369,8 +369,8 @@ async function handleComplaint(client, i) {
       .run(result, link, nowTs(), c.thread_id);
     const f = getComplaint(c.thread_id);
     if (i.isFromMessage() && isAlertMessage(i.message.id)) {
-      // закрыли из канала просрочек: отвечаем там, карточку жалобы обновляем отдельно
-      await i.reply({ content: `✅ Жалоба №${f.number ?? '?'} закрыта.`, ...EPH });
+      // закрыли из канала просрочек: без отдельного ответа — сама карточка просрочки станет карточкой закрытой жалобы
+      await i.deferUpdate();
       await refreshMessage(client, f);
     } else {
       await (i.isFromMessage() ? i.update(messagePayload(f)) : i.reply({ ...messagePayload(f), ...EPH }));
