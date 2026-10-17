@@ -144,13 +144,9 @@ export async function checkDeadlines(client, forumUrl, { force = false } = {}) {
       db.prepare('UPDATE complaints SET notified_close=1, last_nag_ts=? WHERE thread_id=?').run(now, f.thread_id);
       await notifyOverdue(client, f, 'close');
       res.overdueClose++;
-      // карточка в канал «Просроченные дедлайны» с упоминанием ГП и ЗГП; если канал не настроен — ЛС ответственным
-      const posted = await postAlert(client, f, 'close').catch((e) => { console.error('alert:', e.message); return false; });
-      if (!posted) {
-        const emb = new EmbedBuilder().setColor(C.danger).setTitle('⏰ Просрочен дедлайн')
-          .setDescription(`закрытие №${f.number} — <@${f.assignee_id}>`).setFooter({ text: stamp() });
-        for (const r of db.prepare('SELECT user_id FROM deadline_responsible').all()) await sendDM(client, r.user_id, { embeds: [emb] });
-      }
+      // карточка в канал «Просроченные дедлайны» (если он поставлен); отдельного ЛС ответственным нет — исполнителю и
+      // старшему составу уже ушло «⚠️ Просрочен дедлайн закрытия!», второе такое же сообщение не нужно
+      await postAlert(client, f, 'close').catch((e) => console.error('alert:', e.message));
       continue;
     }
 

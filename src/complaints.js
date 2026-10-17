@@ -85,19 +85,26 @@ export function complaintEmbed(c) {
 
 const STATUS_TEXT = { new: 'Новая', assigned: 'Назначена', accepted: 'В работе', closed: 'Закрыта', old: 'Архив' };
 
+/** Статус в «Инфо» — значок по состоянию, как в оригинале («🟡 В работе») */
+const STATUS_ICON = { new: '🔔', assigned: '📋', accepted: '🟡', old: '📦' };
+const statusLine = (c) => (c.status === 'closed'
+  ? `${{ satisfied: '🟢', rejected: '🔴' }[c.result] ?? '⚪'} ${c.result ? `Закрыта (${RESULTS[c.result]})` : 'Закрыта'}`
+  : `${STATUS_ICON[c.status] ?? '•'} ${STATUS_TEXT[c.status] ?? c.status}`);
+
+/** «Инфо» — один в один с оригиналом: по три поля в ряд, дедлайны ответа и закрытия рядом */
 export function infoEmbed(c) {
-  const who = c.assignee_id ? `${prosecutorName(c.assignee_id) ?? '—'} (<@${c.assignee_id}>)` : '—';
-  const status = c.status === 'closed' && c.result ? `Закрыта (${RESULTS[c.result]})` : STATUS_TEXT[c.status] ?? c.status;
+  const name = c.assignee_id ? prosecutorName(c.assignee_id) : null;
+  const who = !c.assignee_id ? '—' : name ? `${safeText(name)} (<@${c.assignee_id}>)` : `<@${c.assignee_id}>`;
   const e = new EmbedBuilder().setColor(C.details).setTitle(`ℹ️ Жалоба №${c.number ?? '?'}`)
     .setDescription(`**${safeText(c.title ?? '')}**`)
     .addFields(
       { name: 'Заявитель', value: safeText(applicantOf(c)), inline: true },
-      { name: 'Аккаунт на форуме', value: safeText(c.author || '—'), inline: true },
-      { name: 'Статус', value: `📋 ${status}`, inline: true },
+      { name: 'Статус', value: statusLine(c), inline: true },
       { name: 'Исполнитель', value: who, inline: true },
       { name: 'Создана', value: msk(c.created_ts), inline: true },
       { name: 'Назначена', value: c.assigned_ts ? msk(c.assigned_ts) : '—', inline: true },
       { name: 'Ответ на форуме', value: c.replies > 0 ? '✅ Да' : '❌ Нет', inline: true },
+      { name: 'Дедлайн ответа', value: c.respond_by && c.status !== 'new' ? msk(c.respond_by) : '—', inline: true },
       { name: 'Дедлайн закрытия', value: c.close_by ? msk(c.close_by) : '—', inline: true },
       { name: 'Закрыта', value: c.closed_ts ? msk(c.closed_ts) : '—', inline: true },
       { name: 'Ссылка', value: `[Открыть на форуме](${c.url})` + (c.close_url ? `\n[Ответ прокурора](${c.close_url})` : '') });
