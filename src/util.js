@@ -61,6 +61,29 @@ export function listProsecutors({ seniorOnly = false, exclude = [] } = {}) {
     .filter((p) => !skip.has(p.user_id) && (!seniorOnly || p.senior));
 }
 
+/**
+ * Все участники сервера без лишних запросов: Discord разрешает загружать полный список не чаще ~раза в 30 секунд
+ * (иначе «rate limited»). Загрузив один раз, дальше берём из памяти — с Server Members Intent Discord сам присылает
+ * изменения (зашёл, вышел, роли). Полная перезагрузка — не чаще раза в 10 минут; если Discord просит подождать —
+ * ждём и повторяем один раз, а при неудаче отдаём то, что уже есть в памяти.
+ */
+const membersLoadedAt = new Map();
+export async function fetchMembers(guild) {
+  if (Date.now() - (membersLoadedAt.get(guild.id) ?? 0) < 10 * 60_000) return guild.members.cache;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const all = await guild.members.fetch();
+      membersLoadedAt.set(guild.id, Date.now());
+      return all;
+    } catch (e) {
+      const wait = Number(e?.data?.retry_after ?? 0);
+      if (attempt === 0 && wait > 0 && wait < 60) { await new Promise((r) => setTimeout(r, (wait + 0.5) * 1000)); continue; }
+      if (guild.members.cache.size > 1) return guild.members.cache;
+      throw e;
+    }
+  }
+}
+
 /** ЛС с учётом журнала (для /clear_all_dm). true — доставлено. */
 export async function sendDM(client, userId, payload) {
   let user = null;

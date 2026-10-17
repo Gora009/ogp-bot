@@ -14,7 +14,7 @@ import { conf } from './config.js';
 import { alertPing } from './alerts.js';
 import { setupReply as formSetupReply } from './forms.js';
 import { PERMS, hasRulesFor, isSeniorMember, memberHas } from './access.js';
-import { C, COLOR, EPH, cfg, listProsecutors, msk, nowTs, sendDM, stamp } from './util.js';
+import { C, COLOR, EPH, cfg, fetchMembers, listProsecutors, msk, nowTs, sendDM, stamp } from './util.js';
 
 export const FORUM_URL = process.env.FORUM_URL || 'https://forum.gta5rp.com/forums/zhaloby-v-prokuraturu.2142/';
 const embed = (title, desc) => new EmbedBuilder().setColor(COLOR).setTitle(title).setDescription(desc || '—').setFooter({ text: stamp() });
@@ -196,7 +196,7 @@ export async function panelDelete(client, i) {
 /* ---------- люди ---------- */
 /** Участники сервера, у которых есть право perm (выданное роли или лично). */
 async function membersWith(guild, perm) {
-  const members = await guild.members.fetch();
+  const members = await fetchMembers(guild);
   return [...members.values()].filter((m) => !m.user.bot && memberHas(m, perm));
 }
 const NO_RULE = (name) =>
@@ -238,7 +238,7 @@ async function missingMembers(client, i) {
   if (!gid) return { error: 'Не задан сервер Прокуратуры: `/settings` → Система.' };
   let pg;
   try { pg = await client.guilds.fetch(gid); } catch { return { error: 'Бот не состоит на сервере Прокуратуры.' }; }
-  const there = await pg.members.fetch();
+  const there = await fetchMembers(pg);
   const all = await membersWith(i.guild, 'prosecutor');
   if (!all.length) return { error: NO_RULE('Прокурор') };
   return { pg, missing: all.filter((m) => !there.has(m.id)) };
@@ -278,7 +278,7 @@ async function broadcastTargets(client, i, role) {
     if (role) return { error: `Рассылка по роли читает список участников сервера.\n${NEED_INTENT}` };
     return { ids: listProsecutors().map((p) => p.user_id), source: 'прокуроры из базы бота (Server Members Intent выключен)' };
   }
-  const members = await i.guild.members.fetch();
+  const members = await fetchMembers(i.guild);
   if (role) {
     return { ids: members.filter((m) => !m.user.bot && m.roles.cache.has(role.id)).map((m) => m.id), source: `участники с ролью <@&${role.id}>` };
   }
@@ -417,7 +417,7 @@ export async function checkResponsible(client, i) {
   await i.deferReply(EPH);
   // ответственные — список из /settings → Жалобы и /deadline_responsible; их и тегает канал просрочек
   const ids = new Set(db.prepare('SELECT user_id FROM deadline_responsible').all().map((r) => r.user_id));
-  const members = await i.guild.members.fetch().catch(() => null);
+  const members = await fetchMembers(i.guild).catch(() => null);
   const lines = [];
   for (const id of ids) {
     const m = members?.get(id) ?? await i.guild.members.fetch(id).catch(() => null);

@@ -4,7 +4,7 @@ import {
 } from 'discord.js';
 import { db } from './db.js';
 import {
-  C, COLOR, EPH, isProsecutor, mskDate, nowTs, parseDate, sendDM, stamp,
+  C, COLOR, EPH, fetchMembers, isProsecutor, mskDate, nowTs, parseDate, sendDM, stamp,
 } from './util.js';
 import { isLeader, roleIdsWith } from './access.js';
 import { destinations, editAll, mirrorsOf, pingIn, sendAll } from './mirror.js';
@@ -242,7 +242,7 @@ export async function syncVacationRole(client) {
   const guild = client.guilds.cache.find((g) => g.roles.cache.has(roleId)); // сервер, где живёт роль «Отпуск»
   const role = guild?.roles.cache.get(roleId);
   if (!role) return;
-  if (!membersLoaded) { await guild.members.fetch(); membersLoaded = true; }
+  if (!membersLoaded) { await fetchMembers(guild); membersLoaded = true; }
   const n = nowTs();
   const active = new Set(db.prepare(`SELECT DISTINCT user_id FROM vacations WHERE status='approved' AND start_ts<=? AND end_ts>=?`)
     .all(n, n).map((r) => r.user_id));

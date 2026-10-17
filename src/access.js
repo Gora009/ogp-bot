@@ -15,7 +15,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS access (
 export const PERMS = {
   full: ['Полный доступ', 'всё, включая саму настройку доступа (/access)'],
   setup: ['Настройка панелей', '/setup, /panels_list, /panel_delete, /sync'],
-  staff: ['Управление сотрудниками', '/register_prosecutors, /sync_judges, /check_members, /invite_missing, /broadcast, /clear_all_dm'],
+  staff: ['Управление сотрудниками', '/register_prosecutors, /sync_judges, /check_members, /invite_missing, /clear_all_dm'],
   monitor: ['Мониторинг и дедлайны', 'упоминается в канале «Просроченные дедлайны», продлевает дедлайны и закрывает просроченные жалобы; ' +
     '/force_parse, /debug_forum, /check_deadlines, /deadline_responsible'],
   approve: ['Одобрение заявок', 'кнопки одобрения отпусков и увольнений, /cancel_vacation, продление дедлайнов, ' +
@@ -23,7 +23,7 @@ export const PERMS = {
   assign: ['Распределение жалоб', 'выбор прокурора и «Авто» в новых жалобах, переназначение чужих жалоб'],
   judge: ['Судья', 'решения по уголовным делам (одобрить / на доработку / отклонить)'],
   prosecutor: ['Прокурор', 'получает жалобы; в базу прокуроров бот вносит сам, по ролям'],
-  senior: ['Старший состав', 'получает жалобы на руководство и сотрудников офиса, принимает решения по уголовным делам (СГП, ЗГП, ГП)'],
+  senior: ['Старший состав', 'получает жалобы на руководство и сотрудников офиса, принимает решения по уголовным делам, /broadcast (СГП, ЗГП, ГП)'],
   case_register: ['Регистрация дел', 'кнопка «Зарегистрировать дело» на панели и /register_case'],
   mentoring: ['Кураторство', 'добавлять кураторов через панель, продлевать сроки, отказ за куратора, /curators'],
   ai: ['Разбор документов (ИИ)', '/analyze и «Краткое содержание» в жалобах. Пока никому не выдано — пользуются все сотрудники прокуратуры и судьи'],
@@ -38,7 +38,7 @@ export const COMMAND_PERMS = {
   access: 'full', autosetup: 'full',
   setup: 'setup', panels_list: 'setup', panel_delete: 'setup', sync: 'setup',
   register_prosecutors: 'staff', sync_judges: 'staff', check_members: 'staff', invite_missing: 'staff',
-  broadcast: 'staff', clear_all_dm: 'staff',
+  broadcast: 'senior', clear_all_dm: 'staff', // рассылка — весь старший состав (СГП, ЗГП, ГП)
   cancel_vacation: 'approve',
   force_parse: 'monitor', debug_forum: 'monitor', check_deadlines: 'monitor', deadline_responsible: 'monitor',
   check_responsible: 'monitor',
@@ -125,7 +125,7 @@ export function setRolesFor(perm, wanted) {
 /** Понятные отказы, как в оригинале: «❌ Только ГП может просматривать панели.» */
 const WHO = {
   full: 'Только ГП может', setup: 'Только ГП может', staff: 'Только ЗГП и ГП могут', monitor: 'Только ЗГП и ГП могут',
-  approve: 'Только СГП, ЗГП и ГП могут', mentoring: 'Только СГП, ЗГП и ГП могут',
+  approve: 'Только СГП, ЗГП и ГП могут', mentoring: 'Только СГП, ЗГП и ГП могут', senior: 'Только СГП, ЗГП и ГП могут',
 };
 const ACTION = {
   panels_list: 'просматривать панели', setup: 'настраивать панели', panel_delete: 'удалять панели', sync: 'синхронизировать команды',

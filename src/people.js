@@ -2,6 +2,7 @@ import { GatewayIntentBits } from 'discord.js';
 import { db } from './db.js';
 import { hasRulesFor, isSeniorMember, memberHas, syncProsecutorRecord } from './access.js';
 import { positionOf } from './roles.js';
+import { fetchMembers } from './util.js';
 
 /**
  * Базы прокуроров и судей бот ведёт сам — /register_prosecutors и /sync_judges больше не нужны:
@@ -21,7 +22,7 @@ export async function syncPeople(client) {
   const pros = new Map();
   const judges = new Map();
   for (const g of client.guilds.cache.values()) {
-    const members = await g.members.fetch().catch((e) => { console.error(`Участники ${g.name}:`, e.message); return null; });
+    const members = await fetchMembers(g).catch((e) => { console.error(`Участники ${g.name}:`, e.message); return null; });
     if (!members) return null; // не удалось прочитать сервер — ничего не удаляем
     for (const m of members.values()) {
       if (isProsecutorMember(m)) pros.set(m.id, { name: m.displayName, senior: isSeniorMember(m) ? 1 : 0, position: positionOf(m) });
