@@ -33,7 +33,7 @@ function planEmbed(plan, i) {
   const e = new EmbedBuilder().setColor(C.info).setTitle('⚙️ Автонастройка')
     .setDescription(plan.items.length || plan.vacation
       ? 'Нашёл роли по названиям. Вот что будет выдано (права только **добавляются**, ничего не удаляется):'
-      : 'Не нашёл ни одной роли с понятным названием (Прокурор, СГП, ЗГП, ГП, Судья, Отпуск). Права можно выдать вручную: `/access grant`.')
+      : 'Не нашёл ни одной роли с понятным названием (Прокурор, СГП, ЗГП, ГП, Судья, Отпуск). Права можно выдать вручную: `/settings` → Доступ.')
     .setFooter({ text: stamp() });
   for (const it of plan.items.slice(0, 20)) {
     e.addFields({ name: `${it.name} → ${it.rule}`, value: it.perms.map((p) => `• ${PERMS[p][0]}`).join('\n'), inline: true });
@@ -69,7 +69,7 @@ export async function handleAuto(client, i) {
   if (action === 'no') return i.update({ content: 'Автонастройка отменена.', embeds: [], components: [] });
   if (!can(i, 'full')) return i.reply({ content: '⛔ Применить автонастройку может только полный доступ (ГП или владелец).', ...EPH });
   if (!saved || Date.now() - saved.ts > 10 * 60_000) {
-    return i.update({ content: '⚠️ План устарел — выполните /autosetup заново.', embeds: [], components: [] });
+    return i.update({ content: '⚠️ План устарел — запустите автонастройку заново: /settings → Общее.', embeds: [], components: [] });
   }
   const { plan } = saved;
   const ins = db.prepare('INSERT OR IGNORE INTO access(target_id,kind,perm) VALUES(?,?,?)');
@@ -87,7 +87,7 @@ export async function handleAuto(client, i) {
     content: '',
     embeds: [new EmbedBuilder().setColor(C.success).setTitle('✅ Автонастройка применена')
       .setDescription(`Новых правил доступа: **${added}**` + (plan.vacation ? `\nРоль «Отпуск»: <@&${plan.vacation.id}>` : '') +
-        `\n\n${note}\n\nПроверить и поправить: \`/access panel\`.`)
+        `\n\n${note}\n\nПроверить и поправить: \`/settings\` → Доступ.`)
       .setFooter({ text: stamp() })],
   });
 }

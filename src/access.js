@@ -14,11 +14,11 @@ db.exec(`CREATE TABLE IF NOT EXISTS access (
 
 /** Права, которые можно выдавать роли или пользователю через /access */
 export const PERMS = {
-  full: ['Полный доступ', 'всё, включая саму настройку доступа (/access)'],
+  full: ['Полный доступ', 'всё, включая саму настройку доступа и иерархии (/settings)'],
   setup: ['Настройка панелей', '/setup, /panels_list, /panel_delete, /sync'],
-  staff: ['Управление сотрудниками', '/register_prosecutors, /sync_judges, /check_members, /invite_missing, /clear_all_dm'],
+  staff: ['Управление сотрудниками', 'сверка баз сотрудников, /check_members, /invite_missing, /clear_all_dm'],
   monitor: ['Мониторинг и дедлайны', 'упоминается в канале «Просроченные дедлайны», продлевает дедлайны и закрывает просроченные жалобы; ' +
-    '/force_parse, /debug_forum, /check_deadlines, /deadline_responsible'],
+    '/force_parse, /debug_forum, /check_deadlines'],
   approve: ['Одобрение заявок', 'кнопки одобрения отпусков и увольнений, /cancel_vacation, продление дедлайнов, ' +
     'действия с чужими жалобами, просмотр всех дел. Эта роль упоминается в новых заявках'],
   assign: ['Распределение жалоб', 'выбор прокурора и «Авто» в новых жалобах, переназначение чужих жалоб'],

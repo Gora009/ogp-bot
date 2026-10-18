@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { Client, GatewayIntentBits } from 'discord.js';
 import {
-  COMMAND_PERMS, access, can, denyText, handleAccess, setAccessChangeHook, setAccessClient, syncProsecutorRecord, trustedUsers,
+  COMMAND_PERMS, can, denyText, handleAccess, setAccessChangeHook, setAccessClient, syncProsecutorRecord, trustedUsers,
 } from './access.js';
 import { installPeopleSync, scheduleSync, syncPeople } from './people.js';
 import { initAllowedGuilds, isAllowedGuild, leaveIfForeign } from './guard.js';
@@ -16,14 +16,14 @@ import * as mnt from './mentoring.js';
 import { faq, handleFaq } from './faq.js';
 import { handleSettings, settings } from './settings.js';
 import { handleForm, pollForms } from './forms.js';
-import { autosetup, handleAuto } from './autosetup.js';
+import { handleAuto } from './autosetup.js';
 import { cabinet, handleCab } from './cabinet.js';
 import { EPH, prettyPayload, rememberName } from './util.js';
 import { installLogo } from './logo.js';
 import { acquireLock } from './lock.js';
 import { installLog, logAction } from './log.js';
 import { analyze, handleDoc } from './analyze.js';
-import { distribution, hierarchy } from './staff.js';
+import { distribution } from './staff.js';
 
 const { DISCORD_TOKEN } = process.env;
 const POLL_MS = Math.max(10, Number(process.env.POLL_SECONDS || 30)) * 1000;
@@ -39,17 +39,16 @@ installLogo();
 
 /** Слэш-команды → обработчики */
 const commandHandlers = {
-  access, setup: admin.setup, panels_list: admin.panelsList, panel_delete: admin.panelDelete,
-  register_prosecutors: admin.registerProsecutors, sync_judges: admin.syncJudges,
+  setup: admin.setup, panels_list: admin.panelsList, panel_delete: admin.panelDelete,
   check_members: admin.checkMembers, invite_missing: admin.inviteMissing,
   broadcast: admin.broadcast, clear_all_dm: admin.clearAllDm,
   force_parse: admin.forceParse, debug_forum: admin.debugForum,
-  check_deadlines: admin.checkDeadlinesCmd, deadline_responsible: admin.deadlineResponsible,
-  check_responsible: admin.checkResponsible, sync: admin.sync, hierarchy, distribution,
+  check_deadlines: admin.checkDeadlinesCmd,
+  check_responsible: admin.checkResponsible, sync: admin.sync, distribution,
   complaints: admin.complaintsStats, find_complaint: admin.findComplaint, faq, cabinet,
   vacation: vac.vacation, vacations: vac.vacations, cancel_vacation: vac.cancelVacation,
   register_case: cases.registerCase, case: cases.caseInfo, cases: cases.casesStats,
-  my_cases: cases.myCases, request_case: cases.requestCase, curators: mnt.curators, autosetup, settings, analyze,
+  my_cases: cases.myCases, request_case: cases.requestCase, curators: mnt.curators, settings, analyze,
 };
 
 /** Кнопки, списки и формы → обработчики по префиксу customId */

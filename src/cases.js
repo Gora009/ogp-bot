@@ -174,7 +174,7 @@ function canRegister(i) {
   if (isLeader(i)) return true;
   return hasRulesFor('case_register') ? can(i, 'case_register') : isProsecutor(i.user.id);
 }
-const denyRegister = (i) => i.reply({ content: '⛔ Регистрировать дела могут только выбранные роли. Доступ выдаёт руководство командой /access.', ...EPH });
+const denyRegister = (i) => i.reply({ content: '⛔ Регистрировать дела могут только выбранные роли. Доступ выдаёт руководство в /settings → Доступ.', ...EPH });
 
 async function createCase(client, i, { owner, number, accused, passport, date, document }) {
   if (![accused, date, document].every(Boolean)) return i.reply({ content: '⚠️ Заполните ссылку на документ, ФИО обвиняемого и дату.', ...EPH });

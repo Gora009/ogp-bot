@@ -137,7 +137,7 @@ export async function setup(client, i) {
     if (panel === 'overdue') {
       await putPanel(client, 'overdue', ch.id);
       done.push(['⏰ Просроченные дедлайны', `Карточки просрочек → <#${ch.id}>`]);
-      notes.push(`Упоминаются ответственные за дедлайны: ${alertPing(ch) || 'пока никто — добавьте их в `/settings` → Жалобы или `/deadline_responsible`'}`);
+      notes.push(`Упоминаются ответственные за дедлайны: ${alertPing(ch) || 'пока никто — добавьте их в `/settings` → Жалобы'}`);
     }
     if (panel === 'dm_blocked') {
       await putPanel(client, 'dm_blocked', ch.id);
@@ -167,7 +167,7 @@ export async function panelsList(client, i) {
     ['VACATION_ROLE_ID', 'Роль «Отпуск»'],
     ['PROSECUTION_GUILD_ID', 'Сервер Прокуратуры'],
   ].map(([k, label]) => `${cfg(k) || (k === 'VACATION_ROLE_ID' && getSetting('vacation_role_id')) ? '✅' : '⚠️'} ${label} (\`${k}\`)`);
-  env.push('Доступ, роли прокуроров и судей: /access list');
+  env.push('Доступ, роли прокуроров и судей: /settings → Доступ');
   return reply(i, 'Зарегистрированные панели', `${lines.join('\n') || 'Панелей нет. Используйте /setup.'}\n\n**Настройки .env:**\n${env.join('\n')}`);
 }
 
@@ -199,7 +199,7 @@ async function membersWith(guild, perm) {
   return [...members.values()].filter((m) => !m.user.bot && memberHas(m, perm));
 }
 const NO_RULE = (name) =>
-  `Нет ни одной роли с доступом «${name}». Выдайте: /access grant permission:${name} role:@роль`;
+  `Нет ни одной роли с доступом «${name}». Выдайте в /settings → Доступ`;
 
 /**
  * Список всех участников сервера Discord отдаёт только при включённом Server Members Intent.
@@ -282,7 +282,7 @@ async function broadcastTargets(client, i, role) {
     return { ids: members.filter((m) => !m.user.bot && m.roles.cache.has(role.id)).map((m) => m.id), source: `участники с ролью <@&${role.id}>` };
   }
   if (!hasRulesFor('prosecutor') && !hasRulesFor('senior')) {
-    return { error: 'Бот не знает, какие роли — прокуроры. Выполните `/autosetup` или `/access grant permission:Прокурор role:@роль`.' };
+    return { error: 'Бот не знает, какие роли — прокуроры. `/settings` → Общее → «Автонастройка по ролям» или Доступ → «Прокурор».' };
   }
   const ids = new Set(members.filter((m) => !m.user.bot && (memberHas(m, 'prosecutor') || isSeniorMember(m))).map((m) => m.id));
   return { ids: [...ids], source: 'все прокуроры и старший состав сервера' };
@@ -425,7 +425,7 @@ export async function checkResponsible(client, i) {
   }
   const e = new EmbedBuilder().setColor(COLOR).setTitle('⏰ Проверка ответственных')
     .setDescription(`⏰ **Ответственные за мониторинг дедлайнов:**\n\n${lines.join('\n') ||
-      'Никого нет. Добавьте в \`/settings\` → Жалобы или командой \`/deadline_responsible\`.'}`)
+      'Никого нет. Добавьте в \`/settings\` → Жалобы.'}`)
     .setFooter({ text: stamp() });
   return i.editReply({ embeds: [e] });
 }

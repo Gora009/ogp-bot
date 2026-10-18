@@ -268,7 +268,7 @@ function ineligible(c, userId) {
   if (accusedIds(c.violator).includes(userId)) return 'Нельзя назначить жалобу на самого обвиняемого.';
   if (assignOff().has(userId)) return '⏸ Этому сотруднику распределение жалоб выключено (/distribution).';
   if (!fitsRank(c, db.prepare('SELECT rank_id FROM prosecutors WHERE user_id=?').get(userId)?.rank_id)) {
-    return `🔒 Эту жалобу рассматривают: ${reviewerNames(c).join(', ') || 'никто (настройте /hierarchy)'}.`;
+    return `🔒 Эту жалобу рассматривают: ${reviewerNames(c).join(', ') || 'никто (настройте /settings → Иерархия)'}.`;
   }
   return null;
 }
@@ -340,7 +340,7 @@ async function handleComplaint(client, i) {
     if (c.assignee_id || c.status === 'closed') return i.update(messagePayload(c));
     if (action === 'pg' || action === 'ref') return i.update(messagePayload(c, Number(arg)));
     if (!canAssign(i)) {
-      return i.reply({ content: '⛔ Назначать жалобы могут только роли с доступом «Распределение жалоб». Его выдаёт руководство: /access.', ...EPH });
+      return i.reply({ content: '⛔ Назначать жалобы могут только роли с доступом «Распределение жалоб». Его выдаёт руководство в /settings → Доступ.', ...EPH });
     }
     // жалобу на сотрудника ОГП назначают те, кто её рассматривает по иерархии (и ГП с полным доступом)
     if (reviewerRanks(c) && !can(i, 'full') && !fitsRank(c, rankOfMember(i.member)?.id)) {
@@ -351,7 +351,7 @@ async function handleComplaint(client, i) {
       return i.reply({
         content: reviewerRanks(c)
           ? `🔒 Нет доступных сотрудников, которые рассматривают эту жалобу (${reviewerNames(c).join(', ')}).`
-          : 'Нет доступных прокуроров. Выдайте роли право «Прокурор» в `/access panel`.',
+          : 'Нет доступных прокуроров. Выдайте роли право «Прокурор» в `/settings` → Доступ.',
         ...EPH,
       });
     }

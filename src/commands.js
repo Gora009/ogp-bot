@@ -1,5 +1,4 @@
 import { ApplicationCommandOptionType as O, ChannelType } from 'discord.js';
-import { PERMS } from './access.js';
 
 const str = (name, description, required = true, extra = {}) => ({ name, description, type: O.String, required, ...extra });
 
@@ -26,22 +25,8 @@ const PANEL_TYPES = [
 ].map(([value, name]) => ({ name, value }));
 const panelChoices = SETUP_PANELS.map(([value, name]) => ({ name, value })); // коротко, без пояснений — так читается легче
 
-const permChoices = Object.entries(PERMS).map(([value, [name]]) => ({ name, value }));
-const target = [
-  { name: 'role', description: 'Роль', type: O.Role, required: false },
-  { name: 'user', description: 'Пользователь', type: O.User, required: false },
-];
 
 const list = [
-  {
-    name: 'access', description: 'Настройка доступа к функциям бота',
-    options: [
-      { name: 'panel', description: 'Панель доступа: выбор ролей и пользователей для каждой функции', type: O.Subcommand },
-      { name: 'grant', description: 'Выдать доступ роли или пользователю', type: O.Subcommand, options: [str('permission', 'Что разрешить', true, { choices: permChoices }), ...target] },
-      { name: 'revoke', description: 'Забрать доступ у роли или пользователя', type: O.Subcommand, options: [str('permission', 'Что запретить', true, { choices: permChoices }), ...target] },
-      { name: 'list', description: 'Показать, у кого какой доступ', type: O.Subcommand },
-    ],
-  },
   {
     name: 'setup', description: 'Настройка панелей бота',
     options: [
@@ -57,8 +42,6 @@ const list = [
       { name: 'channel', description: 'Канал (если таких панелей несколько)', type: O.Channel, channel_types: [ChannelType.GuildText], required: false },
     ],
   },
-  { name: 'register_prosecutors', description: 'Сверить базу прокуроров по ролям сейчас (бот делает это сам)' },
-  { name: 'sync_judges', description: 'Сверить базу судей по ролям сейчас (бот делает это сам)' },
   { name: 'check_members', description: 'Проверить кто из прокуроров Правительства отсутствует в ДС Прокуратуры' },
   { name: 'invite_missing', description: 'Отправить приглашения в ДС Прокуратуры всем отсутствующим прокурорам' },
   {
@@ -76,13 +59,6 @@ const list = [
   },
   { name: 'debug_forum', description: 'Отладка парсера форума' },
   { name: 'check_deadlines', description: 'Принудительная проверка просроченных дедлайнов' },
-  {
-    name: 'deadline_responsible', description: 'Управление ответственными за мониторинг дедлайнов',
-    options: [
-      str('action', 'Действие', true, { choices: [{ name: 'Добавить', value: 'add' }, { name: 'Удалить', value: 'remove' }, { name: 'Список', value: 'list' }] }),
-      { name: 'user', description: 'Пользователь', type: O.User, required: false },
-    ],
-  },
   { name: 'check_responsible', description: 'Проверить ответственных за дедлайны' },
   {
     name: 'sync', description: 'Синхронизация: команды, панели и карточки на всех серверах',
@@ -119,27 +95,6 @@ const list = [
   { name: 'my_cases', description: 'Мои уголовные дела' },
   { name: 'request_case', description: 'Запросить доступ к делу' },
   {
-    name: 'hierarchy', description: 'Иерархия: кто рассматривает жалобы на какие должности',
-    options: [
-      { name: 'list', description: 'Показать иерархию', type: O.Subcommand },
-      { name: 'reviews', description: 'Чьи жалобы рассматривает должность', type: O.Subcommand, options: [
-        str('position', 'Должность, например: ЗГП', true, { max_length: 60 }),
-        str('targets', 'На кого рассматривает — через запятую, например: Прокурор, Помощник прокурора', false, { max_length: 300 }),
-      ] },
-      { name: 'add', description: 'Добавить должность', type: O.Subcommand, options: [
-        str('name', 'Название, например: Старший прокурор', true, { max_length: 60 }),
-        str('keywords', 'Слова в названии роли и в жалобе, через запятую: старший прокурор', true, { max_length: 300 }),
-        str('before', 'Поставить выше должности (по умолчанию — в конец)', false, { max_length: 60 }),
-      ] },
-      { name: 'keywords', description: 'Изменить слова должности', type: O.Subcommand, options: [
-        str('name', 'Должность', true, { max_length: 60 }),
-        str('keywords', 'Слова через запятую', true, { max_length: 300 }),
-      ] },
-      { name: 'remove', description: 'Удалить должность', type: O.Subcommand, options: [str('name', 'Должность', true, { max_length: 60 })] },
-      { name: 'reset', description: 'Вернуть начальную иерархию', type: O.Subcommand },
-    ],
-  },
-  {
     name: 'distribution', description: 'Включить / выключить распределение жалоб сотруднику',
     options: [
       { name: 'off', description: 'Не распределять жалобы этому сотруднику', type: O.Subcommand, options: [{ name: 'user', description: 'Сотрудник', type: O.User, required: true }] },
@@ -147,7 +102,6 @@ const list = [
       { name: 'list', description: 'Кому распределение выключено', type: O.Subcommand },
     ],
   },
-  { name: 'autosetup', description: 'Автонастройка: права ролям по названиям (Прокурор, СГП, ЗГП, ГП, Судья, Отпуск)' },
   { name: 'curators', description: 'Действующие кураторства' },
   { name: 'faq', description: 'FAQ и справка по боту' },
   { name: 'settings', description: 'Все настройки бота в одном окне' },
