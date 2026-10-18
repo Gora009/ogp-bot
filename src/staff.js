@@ -33,7 +33,7 @@ function view(note = '') {
     .setFooter({ text: stamp() });
 }
 /** После изменений — пересчитать должности сотрудников и нарушителей в открытых жалобах */
-async function apply(client) {
+export async function applyHierarchy(client) {
   const { scheduleSync } = await import('./people.js');
   scheduleSync(client);
   const { recomputeTargets } = await import('./complaints.js');
@@ -61,7 +61,7 @@ export async function hierarchy(client, i) {
     note = '↩️ Иерархия сброшена к начальной.';
   }
   if (r.error) return i.reply({ content: `⚠️ ${r.error} Названия должностей — как в \`/hierarchy list\`.`, ...EPH });
-  if (sub !== 'list') await apply(client);
+  if (sub !== 'list') await applyHierarchy(client);
   return i.reply({ embeds: [view(note)], ...EPH });
 }
 export const rankExists = (name) => !!rankByName(name);

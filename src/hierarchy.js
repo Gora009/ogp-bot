@@ -138,3 +138,14 @@ if (getSetting('hierarchy_kw_v2') === null) {
   if (r) setKeywordsOf(r.name, [...new Set([...r.keywords, '1 ый заместитель', '1 й заместитель', '1 заместитель'])]);
   setSetting('hierarchy_kw_v2', '1');
 }
+
+/** Поднять / опустить должность в списке (выше — старше: при нескольких ролях берётся самая высокая) */
+export function moveRank(id, dir) {
+  const list = ranks();
+  const k = list.findIndex((r) => r.id === id);
+  const j = k + (dir === 'up' ? -1 : 1);
+  if (k < 0 || j < 0 || j >= list.length) return;
+  [list[k], list[j]] = [list[j], list[k]];
+  const upd = db.prepare('UPDATE ranks SET sort=? WHERE id=?');
+  list.forEach((r, n) => upd.run(n + 1, r.id));
+}

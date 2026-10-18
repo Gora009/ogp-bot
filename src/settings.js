@@ -4,7 +4,8 @@ import {
 } from 'discord.js';
 import { db, getSetting, setSetting } from './db.js';
 import { PERMS, can, hasAnyRules, notifyAccessChange, roleIdsWith, setRolesFor, userIdsWith } from './access.js';
-import { rankById, ranks, targetsOf } from './hierarchy.js';
+import { addRank, moveRank, rankById, rankByName, ranks, removeRank, resetHierarchy, setKeywordsOf, setReviews, targetsOf } from './hierarchy.js';
+import { applyHierarchy } from './staff.js';
 import { autoAssignText, conf, setConf } from './config.js';
 import { FORUM_URL, registerCommands } from './admin.js';
 import { C, EPH } from './util.js';
@@ -25,7 +26,7 @@ import path from 'node:path';
 const LINE = '_'.repeat(22);
 const POLL = Math.max(10, Number(process.env.POLL_SECONDS || 30));
 
-const PAGES = [[['main', 'Общее'], ['access', 'Доступ'], ['complaints', 'Жалобы'], ['staff', 'Сотрудники'], ['system', 'Система']]];
+const PAGES = [[['main', 'Общее'], ['access', 'Доступ'], ['complaints', 'Жалобы'], ['staff', 'Сотрудники'], ['system', 'Система']], [['hierarchy', 'Иерархия']]];
 
 const V2 = MessageFlags.IsComponentsV2;
 /** «Срок закрытия: 72 ч» → «**Срок закрытия:** 72 ч» (короткая подпись без разметки) */
@@ -147,9 +148,9 @@ function complaintsView(msg = '') {
       `Принять жалобу (дедлайн ответа): ${rem[0] ?? 24} ч от подачи — иначе исполнителю «Просрочен дедлайн ответа!»`,
       `После просрочки: ${rep > 0 ? `повтор исполнителю каждые ${rep} ч` : 'без повторов'}`,
       '',
-      '**Иерархия — кто рассматривает жалобы на кого**',
-      ...ranks().map((r) => `${r.name}: ${targetsOf(r.id).map((t) => rankById(t)?.name).filter(Boolean).join(', ') || '—'}`),
-      '-# Меняется командой `/hierarchy`. Выключить распределение жалоб человеку: `/distribution off`.',
+      '**Иерархия**',
+      `Должностей: ${ranks().length}. Кто рассматривает жалобы на кого — в разделе «Иерархия» (кнопка ниже).`,
+      '-# Выключить распределение жалоб человеку: `/distribution off`.',
       '',
       '**Ответственные за дедлайны**',
       `${resp.map((u) => `<@${u}>`).join(' ') || 'не назначены'} — упоминаются в канале просрочек и могут продлевать сроки`,
@@ -227,8 +228,88 @@ function systemView(client, msg = '') {
     ]);
 }
 
+/* ---------- раздел «Иерархия»: кто рассматривает жалобы на какие должности ---------- */
+function hierarchyView(selected = null, msg = '') {
+  const all = ranks();
+  const nameOf = (id) => all.find((r) => r.id === id)?.name ?? '?';
+  const sel = all.find((r) => r.id === selected) ?? null;
+  const body = [
+    '**Должности (выше — старше)**',
+    ...all.map((r, k) => `${k + 1}. **${r.name}** → ${targetsOf(r.id).map(nameOf).join(', ') || '—'}`),
+    '-# Справа — на кого должность рассматривает жалобы. Жалобу на должность получают только те, кто её рассматривает; ' +
+      'жалобы не на сотрудников ОГП — любой прокурор.',
+  ];
+  if (sel) {
+    body.push(`**Должность: ${sel.name}**`,
+      `Слова: ${sel.keywords.join(', ') || '—'}`,
+      `Рассматривает жалобы на: ${targetsOf(sel.id).map(nameOf).join(', ') || '—'}`,
+      '-# По словам бот узнаёт должность в названиях ролей (у сотрудников) и в «Сведениях о нарушителе» (в жалобах), в любом падеже.');
+  } else {
+    body.push('**Как настроить**', 'Выберите должность в списке ниже — появятся её настройки.');
+  }
+  body.push(...note(msg));
+  const pick = new StringSelectMenuBuilder().setCustomId('set:h:pick').setPlaceholder('Выберите должность')
+    .addOptions(all.slice(0, 25).map((r) => ({ label: r.name.slice(0, 100), value: String(r.id), default: r.id === sel?.id })));
+  const rows = [...nav('hierarchy')];
+  if (all.length) rows.push(row(pick));
+  if (sel) {
+    const others = all.filter((r) => r.id !== sel.id).slice(0, 25);
+    const targets = new Set(targetsOf(sel.id));
+    if (others.length) {
+      rows.push(row(new StringSelectMenuBuilder().setCustomId(`set:h:rev:${sel.id}`).setPlaceholder('Рассматривает жалобы на… (отметьте)')
+        .setMinValues(0).setMaxValues(others.length)
+        .addOptions(others.map((r) => ({ label: r.name.slice(0, 100), value: String(r.id), default: targets.has(r.id) })))));
+    }
+    rows.push(row(btn(`set:h:kw:${sel.id}`, 'Изменить слова'), btn(`set:h:up:${sel.id}`, '↑ Выше'), btn(`set:h:down:${sel.id}`, '↓ Ниже'),
+      btn(`set:h:del:${sel.id}`, 'Удалить', ButtonStyle.Danger)));
+  }
+  rows.push(row(btn('set:h:add', 'Добавить должность', ButtonStyle.Primary), btn('set:h:reset', 'Сбросить к начальной')));
+  return page(section('Иерархия', 'Кто рассматривает жалобы на какие должности', body), rows);
+}
+
+/** Кнопки, списки и формы раздела «Иерархия» (менять может только «Полный доступ») */
+async function handleHierarchy(client, i, sub, id) {
+  if (!can(i, 'full')) return i.reply({ content: '⛔ Иерархию меняет только руководство с «Полным доступом».', ...EPH });
+  const r = rankById(Number(id));
+  const words = (s) => [...new Set(String(s).split(/[,;\n]/).map((x) => x.trim().toLowerCase()).filter(Boolean))];
+  const done = async (sel, msg) => { await applyHierarchy(client); return i.update(hierarchyView(sel, msg)); };
+  if (sub === 'pick') return i.update(hierarchyView(Number(i.values[0])));
+  if (sub === 'rev' && r) {
+    const names = i.values.map((v) => rankById(Number(v))?.name).filter(Boolean);
+    setReviews(r.name, names);
+    return done(r.id, `«${r.name}» рассматривает жалобы на: ${names.join(', ') || '— (никого)'}.`);
+  }
+  if (sub === 'up' || sub === 'down') { if (r) moveRank(r.id, sub); return done(r?.id, r ? `«${r.name}» перемещена ${sub === 'up' ? 'выше' : 'ниже'}.` : ''); }
+  if (sub === 'del' && r) { removeRank(r.name); return done(null, `Должность «${r.name}» удалена.`); }
+  if (sub === 'reset') { resetHierarchy(); return done(null, 'Иерархия сброшена к начальной.'); }
+  if (sub === 'kw' && r) {
+    return i.showModal(new ModalBuilder().setCustomId(`set:h:kws:${r.id}`).setTitle(`Слова: ${r.name}`.slice(0, 45)).addComponents(
+      input('kw', 'Слова через запятую или с новой строки', r.keywords.join(', '), TextInputStyle.Paragraph, 1000)));
+  }
+  if (sub === 'kws' && r) {
+    const kw = words(i.fields.getTextInputValue('kw'));
+    if (!kw.length) return i.reply({ content: '⚠️ Нужно хотя бы одно слово.', ...EPH });
+    setKeywordsOf(r.name, kw);
+    return done(r.id, `Слова должности «${r.name}» сохранены.`);
+  }
+  if (sub === 'add') {
+    return i.showModal(new ModalBuilder().setCustomId('set:h:adds').setTitle('Новая должность').addComponents(
+      input('name', 'Название, например: Старший прокурор', '', TextInputStyle.Short, 60),
+      input('kw', 'Слова в ролях и жалобах, через запятую', '', TextInputStyle.Paragraph, 1000)));
+  }
+  if (sub === 'adds') {
+    const name = i.fields.getTextInputValue('name').trim();
+    const kw = words(i.fields.getTextInputValue('kw'));
+    const res = addRank(name, kw.length ? kw : [name.toLowerCase()]);
+    if (res.error) return i.reply({ content: `⚠️ ${res.error}`, ...EPH });
+    return done(rankByName(name)?.id, `Должность «${name}» добавлена в конец списка. Отметьте, кого она рассматривает, и при необходимости поднимите выше.`);
+  }
+  return i.update(hierarchyView(r?.id ?? null, 'Должность не найдена — список обновлён.'));
+}
+
 const view = (client, page, msg) => ({
   main: () => mainView(client, msg), access: () => accessView('prosecutor', msg), complaints: () => complaintsView(msg),
+  hierarchy: () => hierarchyView(null, msg),
   staff: () => staffView(msg), system: () => systemView(client, msg),
 }[page] ?? (() => mainView(client, msg)))();
 
@@ -298,7 +379,8 @@ export const settings = (client, i) => i.reply({ ...mainView(client), flags: V2 
 
 export async function handleSettings(client, i) {
   if (!can(i, 'setup')) return i.reply({ content: '⛔ Настройки доступны руководству (право «Настройка панелей»).', ...EPH });
-  const [, action, arg] = i.customId.split(':');
+  const [, action, arg, extra] = i.customId.split(':');
+  if (action === 'h') return handleHierarchy(client, i, arg, extra);
 
   if (action === 'p') return i.update(view(client, arg));
 
