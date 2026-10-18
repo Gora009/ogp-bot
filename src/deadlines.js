@@ -3,7 +3,7 @@ import { db, getSetting, setSetting } from './db.js';
 import { fetchThreadState, fetchThreads } from './forum.js';
 import { assign, complaintEmbed, getComplaint, pickAuto, refreshMessage, respondByOf } from './complaints.js';
 import { closedText, postAlert, resolveAlerts } from './alerts.js';
-import { C, listProsecutors, msk, nowTs, sendDM, stamp } from './util.js';
+import { C, msk, nowTs, sendDM, stamp } from './util.js';
 import { conf } from './config.js';
 
 const OPEN_SQL = `SELECT * FROM complaints WHERE status IN ('assigned','accepted') AND assignee_id IS NOT NULL AND close_by IS NOT NULL`;
@@ -47,9 +47,8 @@ const overdueEmbed = (c, kind) => {
     .setFooter({ text: stamp() });
 };
 
-/** Кому ЛС о просрочке: исполнителю и всему старшему составу (СГП, ЗГП, ГП), кроме тех, кто в отпуске */
-const overdueRecipients = (c) => [...new Set([c.assignee_id,
-  ...listProsecutors({ seniorOnly: true }).filter((p) => !p.vacation).map((p) => p.user_id)])].filter(Boolean);
+/** ЛС о просрочке — только исполнителю; старший состав и ответственные видят просрочку в канале «Просроченные дедлайны» */
+const overdueRecipients = (c) => [c.assignee_id].filter(Boolean);
 async function notifyOverdue(client, c, kind) {
   const payload = { embeds: [overdueEmbed(c, kind)] };
   for (const id of overdueRecipients(c)) logSent(`Просрочка по жалобе №${c.number}`, id, await sendDM(client, id, payload));
@@ -139,13 +138,12 @@ export async function checkDeadlines(client, forumUrl, { force = false } = {}) {
     // (выше) и просрочка закрытия (ниже)
     if (f.close_by > now) continue;
 
-    // 2) дедлайн прошёл — исполнителю и старшему составу, карточка в канал просрочек
+    // 2) дедлайн прошёл — ЛС только исполнителю, карточка в канал просрочек
     if (!f.notified_close) {
       db.prepare('UPDATE complaints SET notified_close=1, last_nag_ts=? WHERE thread_id=?').run(now, f.thread_id);
       await notifyOverdue(client, f, 'close');
       res.overdueClose++;
-      // карточка в канал «Просроченные дедлайны» (если он поставлен); отдельного ЛС ответственным нет — исполнителю и
-      // старшему составу уже ушло «⚠️ Просрочен дедлайн закрытия!», второе такое же сообщение не нужно
+      // карточка в канал «Просроченные дедлайны» (если он поставлен) — там её видят ответственные и старший состав
       await postAlert(client, f, 'close').catch((e) => console.error('alert:', e.message));
       continue;
     }
