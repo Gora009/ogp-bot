@@ -10,7 +10,7 @@ import { accusedIds, isRestricted } from './restricted.js';
 import { conf } from './config.js';
 import { closedText, extendedText, isAlertMessage, resolveAlerts } from './alerts.js';
 import { destinations, editAll, mirrorsOf, pingIn, sendAll } from './mirror.js';
-import { C, COLOR, EPH, listProsecutors, msk, nowTs, safeText, sendDM, stamp } from './util.js';
+import { C, COLOR, EPH, displayNameOf, listProsecutors, msk, nameAndTag, nowTs, safeText, sendDM, stamp } from './util.js';
 
 /** Дедлайн ответа (нажать «Принять») — через столько часов после подачи жалобы: время первого напоминания (по умолчанию 24) */
 export const respondHours = () => conf.reminderHours()[0] ?? 24;
@@ -22,7 +22,6 @@ const YELLOW = C.warn;
 const RESULTS = { satisfied: 'удовлетворена', rejected: 'отклонена' };
 
 export const getComplaint = (id) => db.prepare('SELECT * FROM complaints WHERE thread_id=?').get(id);
-const prosecutorName = (id) => db.prepare('SELECT name FROM prosecutors WHERE user_id=?').get(id)?.name;
 
 /* ---------- embed'ы ---------- */
 // Заголовок и автор приходят с публичного форума: экранируем разметку, чтобы в карточку
@@ -78,7 +77,7 @@ export function complaintEmbed(c) {
   e.setColor(YELLOW).setTitle(`${accepted ? '🟡' : '📋'} Жалоба №${c.number ?? '?'}`)
     .setFooter({ text: stamp(accepted ? c.accepted_ts : c.assigned_ts) });
   e.addFields(
-    { name: '📌 Назначено', value: `<@${c.assignee_id}>`, inline: true },
+    { name: '📌 Назначено', value: displayNameOf(c.assignee_id) ? safeText(displayNameOf(c.assignee_id)) : `<@${c.assignee_id}>`, inline: true },
     { name: '⏰ Дедлайн', value: msk(c.close_by), inline: true }); // 72 ч с момента подачи жалобы на форуме
   return e;
 }
@@ -93,8 +92,7 @@ const statusLine = (c) => (c.status === 'closed'
 
 /** «Инфо» — один в один с оригиналом: по три поля в ряд, дедлайны ответа и закрытия рядом */
 export function infoEmbed(c) {
-  const name = c.assignee_id ? prosecutorName(c.assignee_id) : null;
-  const who = !c.assignee_id ? '—' : name ? `${safeText(name)} (<@${c.assignee_id}>)` : `<@${c.assignee_id}>`;
+  const who = nameAndTag(c.assignee_id); // «Gora💢 (@Gora💢)»
   const e = new EmbedBuilder().setColor(C.details).setTitle(`ℹ️ Жалоба №${c.number ?? '?'}`)
     .setDescription(`**${safeText(c.title ?? '')}**`)
     .addFields(
@@ -164,7 +162,7 @@ function actionRows(c) {
   const accepted = c.status === 'accepted';
   return [new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`c:acc:${c.thread_id}`).setLabel(accepted ? 'В работе' : 'Принять')
-      .setEmoji(accepted ? '✔️' : '✅').setStyle(accepted ? ButtonStyle.Secondary : ButtonStyle.Success).setDisabled(accepted),
+      .setEmoji('✅').setStyle(accepted ? ButtonStyle.Secondary : ButtonStyle.Success).setDisabled(accepted),
     new ButtonBuilder().setCustomId(`c:re:${c.thread_id}`).setLabel('Переназначить').setEmoji('🔄').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`c:cl:${c.thread_id}`).setLabel('Закрыть').setEmoji('📝').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId(`c:inf:${c.thread_id}`).setLabel('Инфо').setEmoji('ℹ️').setStyle(ButtonStyle.Secondary))];
@@ -175,7 +173,7 @@ export function messagePayload(c, page = 0) {
   const embeds = [complaintEmbed(c)];
   if (c.status === 'closed') return { content: '', embeds, components: [] };
   if (!c.assignee_id) return { content: '', embeds, components: unassignedRows(c, page) };
-  return { content: `📋 <@${c.assignee_id}>, вам назначена жалоба!`, embeds, components: actionRows(c) };
+  return { content: c.status === 'accepted' ? '' : `📋 <@${c.assignee_id}>, вам назначена жалоба!`, embeds, components: actionRows(c) };
 }
 
 /* ---------- назначение ---------- */
@@ -279,6 +277,18 @@ export async function handleComponent(client, i) {
   if (CHANGES.has(action)) await refreshMessage(client, getComplaint(Number(tid)), i.message?.id).catch(() => {});
 }
 
+/**
+ * Нажали «Закрыть» / «Продлить» у уже закрытой жалобы. На карточке в канале просрочек — сразу показываем итог
+ * («🟢 Жалоба №… — Удовлетворена»), убирая кнопки: так устаревшая карточка чинится сама, даже если бот не смог
+ * обновить её раньше (например, не было доступа к каналу). В остальных местах — короткий ответ.
+ */
+function alreadyClosed(i, c) {
+  if (i.isFromMessage?.() && i.message && isAlertMessage(i.message.id)) {
+    return i.update({ embeds: [complaintEmbed(c)], components: [] });
+  }
+  return i.reply({ content: 'Жалоба уже закрыта.', ...EPH });
+}
+
 async function handleComplaint(client, i) {
   const [, action, tid, arg] = i.customId.split(':');
   const c = getComplaint(Number(tid));
@@ -353,7 +363,7 @@ async function handleComplaint(client, i) {
   // --- закрыть ---
   if (action === 'cl') {
     if (!canAct(i, c) && !canControl(i)) return deny(i);
-    if (c.status === 'closed') return i.reply({ content: 'Жалоба уже закрыта.', ...EPH });
+    if (c.status === 'closed') return alreadyClosed(i, c);
     return i.showModal(new ModalBuilder().setCustomId(`c:cm:${c.thread_id}`).setTitle('Закрытие жалобы').addComponents(
       new ActionRowBuilder().addComponents(
         new TextInputBuilder().setCustomId('link').setLabel('Ссылка на ответ').setStyle(TextInputStyle.Short)
@@ -364,7 +374,7 @@ async function handleComplaint(client, i) {
   }
   if (action === 'cm') {
     if (!canAct(i, c) && !canControl(i)) return deny(i);
-    if (c.status === 'closed') return i.reply({ content: 'Жалоба уже закрыта.', ...EPH });
+    if (c.status === 'closed') return alreadyClosed(i, c);
     const link = i.fields.getTextInputValue('link').trim();
     const raw = i.fields.getTextInputValue('result').trim().toLowerCase();
     if (!/^https?:\/\/forum\.gta5rp\.com\/threads\//i.test(link)) {
@@ -405,7 +415,7 @@ async function handleComplaint(client, i) {
   }
   if (action === 'xr' || action === 'xc') {
     if (!canControl(i)) return i.reply({ content: '⛔ Продлевать дедлайны может руководство.', ...EPH });
-    if (c.status === 'closed') return i.reply({ content: 'Жалоба уже закрыта.', ...EPH });
+    if (c.status === 'closed') return alreadyClosed(i, c);
     return i.showModal(new ModalBuilder().setCustomId(`c:xm:${c.thread_id}:${action}`)
       .setTitle('Продление дедлайна').addComponents(
         new ActionRowBuilder().addComponents(

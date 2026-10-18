@@ -1,7 +1,7 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
 import { db } from './db.js';
 import { destinations, editAll, mirrorByMessage, mirrorsOf, sendAll } from './mirror.js';
-import { C, msk, nowTs, stamp } from './util.js';
+import { C, msk, nameAndTag, nowTs, stamp } from './util.js';
 
 /**
  * Канал «Просроченные дедлайны» (/setup): карточка на каждую просрочку с упоминанием ответственных за дедлайны
@@ -19,13 +19,12 @@ export const alertsChannelId = () => destinations('overdue')[0] ?? null;
 export const isAlertMessage = (messageId) => mirrorByMessage(messageId)?.kind === 'alert'
   || !!db.prepare('SELECT 1 FROM overdue_alerts WHERE message_id=?').get(messageId);
 
-const nameOf = (id) => db.prepare('SELECT name FROM prosecutors WHERE user_id=?').get(id)?.name;
 
 function alertEmbed(c, kind, resolved = null) {
   const lines = [
     `**Жалоба:** №${c.number ?? '?'}`,
     // «ПСК | Riley Zakonov (@…)»; имени в базе нет — только упоминание, без пустых скобок
-    `**Исполнитель:** ${!c.assignee_id ? '—' : nameOf(c.assignee_id) ? `${nameOf(c.assignee_id)} (<@${c.assignee_id}>)` : `<@${c.assignee_id}>`}`,
+    `**Исполнитель:** ${nameAndTag(c.assignee_id)}`,
     `**Тип:** ${KIND[kind]}`,
     `**Ссылка:** [Форум](${c.url})`,
   ];

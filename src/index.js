@@ -18,7 +18,7 @@ import { handleSettings, settings } from './settings.js';
 import { handleForm, pollForms } from './forms.js';
 import { autosetup, handleAuto } from './autosetup.js';
 import { cabinet, handleCab } from './cabinet.js';
-import { EPH, prettyPayload } from './util.js';
+import { EPH, prettyPayload, rememberName } from './util.js';
 import { installLogo } from './logo.js';
 import { acquireLock } from './lock.js';
 import { installLog, logAction } from './log.js';
@@ -87,6 +87,7 @@ async function route(client, i) {
   }
   // роли пользователя известны из самого взаимодействия: прокурор попадает в базу сам, флаг «старший состав» актуален
   syncProsecutorRecord(i.member);
+  rememberName(i.member);
 
   if (i.isAutocomplete()) return i.respond([]).catch(() => {});
   if (i.isChatInputCommand()) {

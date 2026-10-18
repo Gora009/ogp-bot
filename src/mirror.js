@@ -59,8 +59,9 @@ export async function editAll(client, kind, ref, payload, exceptMessageId = null
       const ch = await client.channels.fetch(m.channel_id);
       await (await ch.messages.fetch(m.message_id)).edit(payloadOf(payload, ch));
     } catch (e) {
-      // сообщение или канал удалены — забываем эту копию
+      // сообщение или канал удалены — забываем эту копию; остальное (нет доступа к каналу и т.п.) — в журнал
       if ([10003, 10008].includes(e.code)) db.prepare('DELETE FROM mirrors WHERE kind=? AND ref=? AND channel_id=?').run(kind, String(ref), m.channel_id);
+      else console.error(`Не удалось обновить сообщение в канале ${m.channel_id} (${kind} ${ref}): ${e.message}`);
     }
   }
 }

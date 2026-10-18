@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS mentorships (
   notified_start INTEGER NOT NULL DEFAULT 0, notified_end INTEGER NOT NULL DEFAULT 0, reminded INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS deadline_responsible (user_id TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS dm_log (channel_id TEXT, message_id TEXT);
+CREATE TABLE IF NOT EXISTS names (user_id TEXT PRIMARY KEY, name TEXT NOT NULL);
 `);
 
 // миграции для баз, созданных старыми версиями бота

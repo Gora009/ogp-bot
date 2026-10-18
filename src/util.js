@@ -84,6 +84,19 @@ export async function fetchMembers(guild) {
   }
 }
 
+/** Запомнить ник человека на сервере (для «Исполнитель: Gora (@Gora)» и т.п.) */
+export function rememberName(member) {
+  const id = member?.id ?? member?.user?.id;
+  const name = member?.displayName ?? member?.user?.globalName ?? member?.user?.username;
+  if (!id || !name || member?.user?.bot) return;
+  db.prepare('INSERT INTO names(user_id,name) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET name=excluded.name WHERE name!=excluded.name').run(id, name);
+}
+/** Ник человека: из базы прокуроров, иначе из справочника ников; null — бот этого человека ещё не видел */
+export const displayNameOf = (id) => (id ? db.prepare('SELECT name FROM prosecutors WHERE user_id=?').get(id)?.name
+  ?? db.prepare('SELECT name FROM names WHERE user_id=?').get(id)?.name ?? null : null);
+/** «Gora💢 (@Gora💢)» — ник и тег; если ник неизвестен — только тег */
+export const nameAndTag = (id) => (!id ? '—' : displayNameOf(id) ? `${safeText(displayNameOf(id))} (<@${id}>)` : `<@${id}>`);
+
 /** ЛС с учётом журнала (для /clear_all_dm). true — доставлено. */
 export async function sendDM(client, userId, payload) {
   let user = null;
