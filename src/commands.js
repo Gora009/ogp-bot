@@ -119,12 +119,32 @@ const list = [
   { name: 'my_cases', description: 'Мои уголовные дела' },
   { name: 'request_case', description: 'Запросить доступ к делу' },
   {
-    name: 'senior_keywords', description: 'Должности, жалобы на которых получает только старший состав',
+    name: 'hierarchy', description: 'Иерархия: кто рассматривает жалобы на какие должности',
     options: [
-      { name: 'list', description: 'Показать список', type: O.Subcommand },
-      { name: 'add', description: 'Добавить слово', type: O.Subcommand, options: [str('word', 'Слово или должность, например: судья', true, { max_length: 40 })] },
-      { name: 'remove', description: 'Убрать слово', type: O.Subcommand, options: [str('word', 'Слово из списка', true, { max_length: 40 })] },
-      { name: 'reset', description: 'Вернуть стандартный список', type: O.Subcommand },
+      { name: 'list', description: 'Показать иерархию', type: O.Subcommand },
+      { name: 'reviews', description: 'Чьи жалобы рассматривает должность', type: O.Subcommand, options: [
+        str('position', 'Должность, например: ЗГП', true, { max_length: 60 }),
+        str('targets', 'На кого рассматривает — через запятую, например: Прокурор, Помощник прокурора', false, { max_length: 300 }),
+      ] },
+      { name: 'add', description: 'Добавить должность', type: O.Subcommand, options: [
+        str('name', 'Название, например: Старший прокурор', true, { max_length: 60 }),
+        str('keywords', 'Слова в названии роли и в жалобе, через запятую: старший прокурор', true, { max_length: 300 }),
+        str('before', 'Поставить выше должности (по умолчанию — в конец)', false, { max_length: 60 }),
+      ] },
+      { name: 'keywords', description: 'Изменить слова должности', type: O.Subcommand, options: [
+        str('name', 'Должность', true, { max_length: 60 }),
+        str('keywords', 'Слова через запятую', true, { max_length: 300 }),
+      ] },
+      { name: 'remove', description: 'Удалить должность', type: O.Subcommand, options: [str('name', 'Должность', true, { max_length: 60 })] },
+      { name: 'reset', description: 'Вернуть начальную иерархию', type: O.Subcommand },
+    ],
+  },
+  {
+    name: 'distribution', description: 'Включить / выключить распределение жалоб сотруднику',
+    options: [
+      { name: 'off', description: 'Не распределять жалобы этому сотруднику', type: O.Subcommand, options: [{ name: 'user', description: 'Сотрудник', type: O.User, required: true }] },
+      { name: 'on', description: 'Снова распределять жалобы сотруднику', type: O.Subcommand, options: [{ name: 'user', description: 'Сотрудник', type: O.User, required: true }] },
+      { name: 'list', description: 'Кому распределение выключено', type: O.Subcommand },
     ],
   },
   { name: 'autosetup', description: 'Автонастройка: права ролям по названиям (Прокурор, СГП, ЗГП, ГП, Судья, Отпуск)' },

@@ -5,7 +5,6 @@ import { complaintEmbed, lastCatchup, poll, publishByNumber, refreshOpenCards } 
 import { checkDeadlines } from './deadlines.js';
 import { caseRegisterPanelPayload, requestPanelPayload } from './cases.js';
 import { mentoringPanelPayload, refreshOpenMentorships } from './mentoring.js';
-import { DEFAULT_KEYWORDS, getKeywords, setKeywords } from './restricted.js';
 import { vacationsPanelPayload } from './vacations.js';
 import { SETUP_PANELS, commands } from './commands.js';
 import { analyzeCommand } from './analyze.js';
@@ -503,21 +502,6 @@ export async function complaintsStats(client, i) {
   return i.reply({ embeds: [e], ...EPH });
 }
 
-/* ---------- /senior_keywords: должности, жалобы на которых идут старшему составу ---------- */
-export async function seniorKeywords(client, i) {
-  const sub = i.options.getSubcommand();
-  const word = (i.options.getString('word') ?? '').trim().toLowerCase();
-  let list = getKeywords();
-  if (sub === 'add' && word && !list.includes(word)) list = [...list, word];
-  if (sub === 'remove') list = list.filter((w) => w !== word);
-  if (sub === 'reset') list = [...DEFAULT_KEYWORDS];
-  if (sub !== 'list') setKeywords(list);
-  const note = sub === 'add' ? `✅ Добавлено: «${word}»\n\n` : sub === 'remove' ? `🗑️ Убрано: «${word}»\n\n` : sub === 'reset' ? '↩️ Список сброшен к стандартному.\n\n' : '';
-  return reply(i, '🔒 Должности «руководства»',
-    `${note}Если в пункте жалобы «Сведения о нарушителе» есть одно из слов, жалоба идёт только старшему составу:\n` +
-    `${list.map((w) => `• ${w}`).join('\n') || '— список пуст, ограничение выключено —'}\n\n` +
-    'Слова до 3 букв (ГП, ЗГП) ищутся как отдельные слова, остальные — как часть слова (например, «прокурор» найдёт «Помощник прокурора»).');
-}
 
 /* ---------- регистрация команд: на каждом сервере (сразу) или глобально (до часа) ---------- */
 /**

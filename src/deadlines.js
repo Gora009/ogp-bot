@@ -1,8 +1,8 @@
 import { EmbedBuilder } from 'discord.js';
 import { db, getSetting, setSetting } from './db.js';
 import { fetchThreadState, fetchThreads } from './forum.js';
-import { assign, complaintEmbed, getComplaint, pickAuto, refreshMessage, respondByOf } from './complaints.js';
-import { closedText, postAlert, resolveAlerts } from './alerts.js';
+import { assign, pickAuto, refreshMessage, respondByOf } from './complaints.js';
+import { postAlert } from './alerts.js';
 import { C, msk, nowTs, sendDM, stamp } from './util.js';
 import { conf } from './config.js';
 
@@ -56,18 +56,9 @@ async function notifyOverdue(client, c, kind) {
 
 const DEEP_PER_SYNC = 5; // сколько старых тем (дальше 3-й страницы) открывать напрямую за один проход
 
-/** Записывает состояние темы; закрытая на форуме тема закрывает жалобу (в том числе ещё не назначенную). */
-async function applyState(client, id, { locked, replies }, res) {
-  const now = nowTs();
-  if (locked) {
-    db.prepare(`UPDATE complaints SET status='closed', closed_ts=?, replies=?, forum_checked_ts=? WHERE thread_id=?`).run(now, replies, now, id);
-    const c = getComplaint(id);
-    await refreshMessage(client, c);
-    await resolveAlerts(client, c, closedText(null), null, complaintEmbed(c));
-    res.closed++;
-  } else {
-    db.prepare('UPDATE complaints SET replies=?, forum_checked_ts=? WHERE thread_id=?').run(replies, now, id);
-  }
+/** Записывает число ответов в теме. Закрытая на форуме тема жалобу в боте не закрывает — это делает человек. */
+function applyState(id, { replies }) {
+  db.prepare('UPDATE complaints SET replies=?, forum_checked_ts=? WHERE thread_id=?').run(replies, nowTs(), id);
 }
 
 /** Обновляет по форуму число ответов и закрытые темы. */
@@ -78,7 +69,7 @@ async function syncForum(client, forumUrl, res) {
   const missing = [];
   for (const c of open) {
     const t = byId.get(c.thread_id);
-    if (t) await applyState(client, c.thread_id, t, res);
+    if (t) applyState(c.thread_id, t);
     else missing.push(c);
   }
   // темы, ушедшие дальше 3-й страницы: открываем напрямую, по чуть-чуть, начиная с давно не проверенных
@@ -89,7 +80,7 @@ async function syncForum(client, forumUrl, res) {
   for (const id of ids.slice(0, DEEP_PER_SYNC)) {
     const c = missing.find((x) => x.thread_id === id);
     try {
-      await applyState(client, id, await fetchThreadState(c.url), res);
+      applyState(id, await fetchThreadState(c.url));
     } catch (e) {
       // тема удалена или недоступна — отметим проверку, чтобы не застревать на ней
       db.prepare('UPDATE complaints SET forum_checked_ts=? WHERE thread_id=?').run(nowTs(), id);

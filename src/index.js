@@ -23,6 +23,7 @@ import { installLogo } from './logo.js';
 import { acquireLock } from './lock.js';
 import { installLog, logAction } from './log.js';
 import { analyze, handleDoc } from './analyze.js';
+import { distribution, hierarchy } from './staff.js';
 
 const { DISCORD_TOKEN } = process.env;
 const POLL_MS = Math.max(10, Number(process.env.POLL_SECONDS || 30)) * 1000;
@@ -44,7 +45,7 @@ const commandHandlers = {
   broadcast: admin.broadcast, clear_all_dm: admin.clearAllDm,
   force_parse: admin.forceParse, debug_forum: admin.debugForum,
   check_deadlines: admin.checkDeadlinesCmd, deadline_responsible: admin.deadlineResponsible,
-  check_responsible: admin.checkResponsible, sync: admin.sync, senior_keywords: admin.seniorKeywords,
+  check_responsible: admin.checkResponsible, sync: admin.sync, hierarchy, distribution,
   complaints: admin.complaintsStats, find_complaint: admin.findComplaint, faq, cabinet,
   vacation: vac.vacation, vacations: vac.vacations, cancel_vacation: vac.cancelVacation,
   register_case: cases.registerCase, case: cases.caseInfo, cases: cases.casesStats,

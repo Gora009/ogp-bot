@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS mentorships (
 CREATE TABLE IF NOT EXISTS deadline_responsible (user_id TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS dm_log (channel_id TEXT, message_id TEXT);
 CREATE TABLE IF NOT EXISTS names (user_id TEXT PRIMARY KEY, name TEXT NOT NULL);
+-- кому не распределять жалобы (/distribution off)
+CREATE TABLE IF NOT EXISTS assign_off (user_id TEXT PRIMARY KEY, by_id TEXT, ts INTEGER);
 `);
 
 // миграции для баз, созданных старыми версиями бота
@@ -58,7 +60,7 @@ for (const [table, col] of [
   ['complaints', 'result TEXT'], ['complaints', 'violator TEXT'], ['complaints', 'restricted INTEGER NOT NULL DEFAULT 0'],
   ['complaints', 'forum_checked_ts INTEGER'], ['complaints', 'applicant TEXT'],
   ['complaints', 'remind_stage INTEGER NOT NULL DEFAULT 0'], ['complaints', 'last_nag_ts INTEGER'],
-  ['prosecutors', 'senior INTEGER NOT NULL DEFAULT 0'], ['prosecutors', 'position TEXT'],
+  ['prosecutors', 'senior INTEGER NOT NULL DEFAULT 0'], ['prosecutors', 'position TEXT'], ['prosecutors', 'rank_id INTEGER'], ['complaints', 'target_rank INTEGER'],
   ['cases', 'decided_ts INTEGER'], ['cases', 'action TEXT'], ['cases', 'action_value TEXT'], ['cases', 'action_by TEXT'],
   ['mentorships', 'cancel_reason TEXT'],
   ['vacations', 'decided_by TEXT'], ['vacations', 'decided_ts INTEGER'], ['vacations', 'reject_reason TEXT'],

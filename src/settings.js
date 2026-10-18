@@ -4,7 +4,7 @@ import {
 } from 'discord.js';
 import { db, getSetting, setSetting } from './db.js';
 import { PERMS, can, hasAnyRules, notifyAccessChange, roleIdsWith, setRolesFor, userIdsWith } from './access.js';
-import { getKeywords, setKeywords } from './restricted.js';
+import { rankById, ranks, targetsOf } from './hierarchy.js';
 import { autoAssignText, conf, setConf } from './config.js';
 import { FORUM_URL, registerCommands } from './admin.js';
 import { C, EPH } from './util.js';
@@ -147,16 +147,16 @@ function complaintsView(msg = '') {
       `Принять жалобу (дедлайн ответа): ${rem[0] ?? 24} ч от подачи — иначе исполнителю «Просрочен дедлайн ответа!»`,
       `После просрочки: ${rep > 0 ? `повтор исполнителю каждые ${rep} ч` : 'без повторов'}`,
       '',
-      '**Жалобы на руководство**',
-      'Если в пункте «Сведения о нарушителе» есть одно из слов, жалобу получает только старший состав:',
-      getKeywords().join(', ') || 'список пуст — ограничение выключено',
+      '**Иерархия — кто рассматривает жалобы на кого**',
+      ...ranks().map((r) => `${r.name}: ${targetsOf(r.id).map((t) => rankById(t)?.name).filter(Boolean).join(', ') || '—'}`),
+      '-# Меняется командой `/hierarchy`. Выключить распределение жалоб человеку: `/distribution off`.',
       '',
       '**Ответственные за дедлайны**',
       `${resp.map((u) => `<@${u}>`).join(' ') || 'не назначены'} — упоминаются в канале просрочек и могут продлевать сроки`,
       ...note(msg),
     ]), [
       ...nav('complaints'),
-      row(btn('set:m:times', 'Сроки и назначение'), btn('set:m:kw', 'Слова для жалоб на руководство'), btn('set:poll', 'Проверить форум сейчас')),
+      row(btn('set:m:times', 'Сроки и назначение'), btn('set:poll', 'Проверить форум сейчас')),
       row(sel),
     ]);
 }
@@ -246,8 +246,6 @@ const MODALS = {
     input('deadline', 'Срок закрытия жалобы, часов', conf.deadlineHours(), TextInputStyle.Short, 4),
     input('rem', 'Напоминания через N часов после подачи', conf.reminderHours().join(', '), TextInputStyle.Short, 40, false),
     input('rep', 'Повтор после просрочки, часов (0 — нет)', conf.repeatHours(), TextInputStyle.Short, 3)),
-  kw: () => new ModalBuilder().setCustomId('set:s:kw').setTitle('Жалобы на руководство').addComponents(
-    input('kw', 'Слова или должности — по одному в строке', getKeywords().join('\n'), TextInputStyle.Paragraph, 1500, false)),
   instr: () => new ModalBuilder().setCustomId('set:s:instr').setTitle('Инструкция кураторства').addComponents(
     input('text', 'Текст инструкции', getSetting('mentor_instruction') ?? '', TextInputStyle.Paragraph, 4000, false)),
   guild: () => new ModalBuilder().setCustomId('set:s:guild').setTitle('Разрешить сервер').addComponents(
@@ -275,11 +273,6 @@ function submitModal(i, kind) {
     setConf('reminder_hours', [...new Set(rem)].sort((a, b) => a - b).join(','));
     setConf('overdue_repeat_hours', rep);
     return ['complaints', 'Сохранено. Новый срок действует для жалоб, назначенных с этого момента.'];
-  }
-  if (kind === 'kw') {
-    const list = [...new Set(v('kw').toLowerCase().split('\n').map((s) => s.trim()).filter(Boolean))];
-    setKeywords(list);
-    return ['complaints', list.length ? `Сохранено слов: ${list.length}.` : 'Список очищен — ограничение выключено.'];
   }
   if (kind === 'instr') {
     setSetting('mentor_instruction', v('text'));

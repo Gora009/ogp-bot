@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { db } from './db.js';
 import { C, COLOR, EPH, cfg, stamp } from './util.js';
 import { namePerms, positionOf } from './roles.js';
+import { rankOfMember } from './hierarchy.js';
 
 db.exec(`CREATE TABLE IF NOT EXISTS access (
   target_id TEXT NOT NULL, kind TEXT NOT NULL, perm TEXT NOT NULL, PRIMARY KEY (target_id, perm))`);
@@ -43,7 +44,7 @@ export const COMMAND_PERMS = {
   force_parse: 'monitor', debug_forum: 'monitor', check_deadlines: 'monitor', deadline_responsible: 'monitor',
   check_responsible: 'monitor',
   curators: 'mentoring',
-  senior_keywords: 'setup', settings: 'setup',
+  hierarchy: 'full', distribution: 'assign', settings: 'setup',
 };
 
 /** Всегда имеют полный доступ: ADMIN_USER_IDS из .env и владелец(цы) приложения (добавляются при старте) */
@@ -130,7 +131,7 @@ const WHO = {
 const ACTION = {
   panels_list: 'просматривать панели', setup: 'настраивать панели', panel_delete: 'удалять панели', sync: 'синхронизировать команды',
   access: 'настраивать доступ', autosetup: 'запускать автонастройку', settings: 'открывать настройки бота',
-  senior_keywords: 'менять список должностей', register_prosecutors: 'сверять базу прокуроров', sync_judges: 'сверять базу судей',
+  hierarchy: 'настраивать иерархию', distribution: 'менять распределение жалоб', register_prosecutors: 'сверять базу прокуроров', sync_judges: 'сверять базу судей',
   check_members: 'проверять участников', invite_missing: 'рассылать приглашения', broadcast: 'делать рассылку',
   clear_all_dm: 'удалять ЛС бота', cancel_vacation: 'отменять отпуска', force_parse: 'запускать парсинг форума',
   debug_forum: 'отлаживать парсер', check_deadlines: 'проверять дедлайны', deadline_responsible: 'назначать ответственных',
@@ -151,14 +152,17 @@ export const isSeniorMember = (m) => memberHas(m, 'senior') || memberHas(m, 'app
 export function syncProsecutorRecord(member) {
   if (!member?.roles?.cache || member.user?.bot) return;
   const senior = isSeniorMember(member) ? 1 : 0;
-  const row = db.prepare('SELECT name, senior, position FROM prosecutors WHERE user_id=?').get(member.id);
-  if (senior || memberHas(member, 'prosecutor')) {
+  const row = db.prepare('SELECT name, senior, position, rank_id FROM prosecutors WHERE user_id=?').get(member.id);
+  const rank = rankOfMember(member);
+  if (senior || memberHas(member, 'prosecutor') || rank) {
     const name = member.displayName ?? member.user?.username ?? member.id;
-    const position = positionOf(member);
-    if (!row || row.name !== name || row.senior !== senior || row.position !== position) {
-      db.prepare(`INSERT INTO prosecutors(user_id,name,senior,position) VALUES(?,?,?,?)
-                  ON CONFLICT(user_id) DO UPDATE SET name=excluded.name, senior=excluded.senior, position=excluded.position`)
-        .run(member.id, name, senior, position);
+    // должность — из иерархии (/hierarchy), иначе по правилам ролей
+    const position = rank?.name ?? positionOf(member);
+    const rankId = rank?.id ?? null;
+    if (!row || row.name !== name || row.senior !== senior || row.position !== position || row.rank_id !== rankId) {
+      db.prepare(`INSERT INTO prosecutors(user_id,name,senior,position,rank_id) VALUES(?,?,?,?,?)
+                  ON CONFLICT(user_id) DO UPDATE SET name=excluded.name, senior=excluded.senior, position=excluded.position,
+                  rank_id=excluded.rank_id`).run(member.id, name, senior, position, rankId);
     }
   } else if (row && hasRulesFor('prosecutor')) {
     db.prepare('DELETE FROM prosecutors WHERE user_id=?').run(member.id);

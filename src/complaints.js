@@ -5,8 +5,9 @@ import {
 import { db, getSetting, setSetting } from './db.js';
 import { applicantFromTitle, fetchComplaintDetails, fetchFirstPost, fetchPage, fetchThreads, uniqueThreads } from './forum.js';
 import { analyzeText, docWarnings, mayUseAI, resultEmbed } from './analyze.js';
-import { can, isLeader, isSenior, refreshSeniorFlags, roleIdsWith } from './access.js';
-import { accusedIds, isRestricted } from './restricted.js';
+import { can, isLeader, isSenior, refreshSeniorFlags } from './access.js';
+import { accusedIds } from './restricted.js';
+import { rankById, rankOfMember, rankOfText, ranks, reviewersOf } from './hierarchy.js';
 import { conf } from './config.js';
 import { closedText, extendedText, isAlertMessage, resolveAlerts } from './alerts.js';
 import { destinations, editAll, mirrorsOf, pingIn, sendAll } from './mirror.js';
@@ -44,8 +45,43 @@ export function duplicateEmbed(c) {
     .setFooter({ text: stamp(c.created_ts) });
 }
 
-/** Пометка жалобы на руководство — одной строкой в карточке */
-const LOCK_LINE = '\n\n🔒 **Жалоба на руководство**';
+/* ---------- иерархия: кто рассматривает жалобу (/hierarchy) ---------- */
+/** id должностей, которые рассматривают жалобу; null — жалоба не на сотрудника ОГП, её может вести любой прокурор */
+const reviewerRanks = (c) => {
+  if (!c?.target_rank || !rankById(c.target_rank)) return null;
+  const r = reviewersOf(c.target_rank);
+  // на эту должность никто не назначен рассматривать (например, на ГП) — рассматривает высшая должность
+  return r.length ? r : [ranks()[0]?.id].filter(Boolean);
+};
+const fitsRank = (c, rankId) => { const r = reviewerRanks(c); return !r || r.includes(rankId); };
+const reviewerNames = (c) => (reviewerRanks(c) ?? []).map((id) => rankById(id)?.name).filter(Boolean);
+/** Кому выключено распределение жалоб (/distribution) */
+export const assignOff = () => new Set(db.prepare('SELECT user_id FROM assign_off').all().map((r) => r.user_id));
+/** «🔒 Жалоба на ЗГП — рассматривают: Первый ЗГП, ГП» */
+function targetLine(c) {
+  const t = c?.target_rank ? rankById(c.target_rank) : null;
+  if (!t) return '';
+  const who = reviewerNames(c);
+  return `\n\n🔒 **Жалоба на сотрудника ОГП: ${t.name}**${who.length ? `\nРассматривают: ${who.join(', ')}` : ''}`;
+}
+/**
+ * Должность нарушителя: сотрудник ОГП, которого назвали в жалобе по нику (его должность из базы),
+ * иначе должность из текста «Сведения о нарушителе» («ЗГП Иванов», «прокурор Travis Coils»).
+ */
+export function targetRankOf(violator) {
+  if (!violator) return null;
+  const named = accusedIds(violator).map((id) => rankById(db.prepare('SELECT rank_id FROM prosecutors WHERE user_id=?').get(id)?.rank_id))
+    .filter(Boolean).sort((x, y) => x.sort - y.sort);
+  return named[0]?.id ?? rankOfText(violator)?.id ?? null;
+}
+// один раз: открытым жалобам — должность нарушителя по новой иерархии (вместо старого «на руководство»)
+if (getSetting('target_rank_v1') === null) {
+  for (const c of db.prepare("SELECT thread_id, violator FROM complaints WHERE status IN ('new','assigned','accepted')").all()) {
+    const t = targetRankOf(c.violator);
+    db.prepare('UPDATE complaints SET target_rank=?, restricted=? WHERE thread_id=?').run(t, t ? 1 : 0, c.thread_id);
+  }
+  setSetting('target_rank_v1', '1');
+}
 
 /** Закрытая жалоба — как в оригинале: «🟢 Жалоба №… — Удовлетворена», тема, заявитель, ссылки, время закрытия */
 const CLOSED = {
@@ -67,7 +103,7 @@ function closedEmbed(c) {
 }
 
 export function complaintEmbed(c) {
-  const e = new EmbedBuilder().setDescription(head(c) + (c.restricted ? LOCK_LINE : '') + (c.duplicate ? DUP_LINE : ''));
+  const e = new EmbedBuilder().setDescription(head(c) + targetLine(c) + (c.duplicate ? DUP_LINE : ''));
   if (c.status === 'closed') return closedEmbed(c);
   if (!c.assignee_id) {
     e.setColor(C.brand).setTitle(`🔔 Жалоба №${c.number ?? '?'}`).setFooter({ text: stamp(c.created_ts) });
@@ -107,13 +143,17 @@ export function infoEmbed(c) {
       { name: 'Закрыта', value: c.closed_ts ? msk(c.closed_ts) : '—', inline: true },
       { name: 'Ссылка', value: `[Открыть на форуме](${c.url})` + (c.close_url ? `\n[Ответ прокурора](${c.close_url})` : '') });
   if (c.duplicate) e.addFields({ name: '⚠️', value: 'Возможный дубликат' });
-  if (c.restricted) e.addFields({ name: '🔒', value: 'Жалоба на руководство — только старший состав' });
+  if (targetLine(c)) e.addFields({ name: '🔒', value: targetLine(c).trim().replace(/\*\*/g, '').replace(/^🔒 /, '') });
   return e.setFooter({ text: stamp() });
 }
 
 /* ---------- компоненты ---------- */
-/** Кого можно назначить на жалобу c: старший состав для жалоб на руководство, и никогда — обвиняемого */
-const candidatesOf = (c) => listProsecutors({ seniorOnly: !!c?.restricted, exclude: accusedIds(c?.violator) });
+/**
+ * Кого можно назначить на жалобу c: по иерархии (жалобу на ЗГП — Первый ЗГП и ГП и т.д.), никогда — обвиняемого
+ * и тех, кому распределение выключено (/distribution off)
+ */
+const candidatesOf = (c) => listProsecutors({ exclude: [...accusedIds(c?.violator), ...assignOff()] })
+  .filter((p) => fitsRank(c, p.rank_id));
 
 /** Сколько жалоб сейчас в работе у каждого прокурора — показывается в списке выбора */
 const workload = () => new Map(db.prepare(`SELECT assignee_id id, COUNT(*) n FROM complaints
@@ -213,21 +253,22 @@ export function assign(client, c, userId, auto = false) {
 /** Наименее загруженный подходящий прокурор (не в отпуске, не обвиняемый, для жалоб на руководство — старший состав) */
 export function pickAuto(c = null, exclude = []) {
   const n = nowTs();
-  const skip = new Set([...accusedIds(c?.violator), ...exclude]);
+  const skip = new Set([...accusedIds(c?.violator), ...exclude, ...assignOff()]);
   const rows = db.prepare(`
-    SELECT p.user_id, p.senior FROM prosecutors p
+    SELECT p.user_id, p.senior, p.rank_id FROM prosecutors p
     WHERE NOT EXISTS (SELECT 1 FROM vacations v WHERE v.user_id=p.user_id AND v.status='approved'
                       AND v.start_ts<=? AND v.end_ts>=?)
     ORDER BY (SELECT COUNT(*) FROM complaints c WHERE c.assignee_id=p.user_id AND c.status IN ('assigned','accepted')),
              RANDOM()`).all(n, n);
-  return rows.find((p) => !skip.has(p.user_id) && (!c?.restricted || p.senior))?.user_id;
+  return rows.find((p) => !skip.has(p.user_id) && fitsRank(c, p.rank_id))?.user_id;
 }
 
 /** null — можно назначать; иначе причина отказа */
 function ineligible(c, userId) {
   if (accusedIds(c.violator).includes(userId)) return 'Нельзя назначить жалобу на самого обвиняемого.';
-  if (c.restricted && !db.prepare('SELECT 1 FROM prosecutors WHERE user_id=? AND senior=1').get(userId)) {
-    return '🔒 Эту жалобу могут вести только СГП, ЗГП и ГП (старший состав).';
+  if (assignOff().has(userId)) return '⏸ Этому сотруднику распределение жалоб выключено (/distribution).';
+  if (!fitsRank(c, db.prepare('SELECT rank_id FROM prosecutors WHERE user_id=?').get(userId)?.rank_id)) {
+    return `🔒 Эту жалобу рассматривают: ${reviewerNames(c).join(', ') || 'никто (настройте /hierarchy)'}.`;
   }
   return null;
 }
@@ -301,14 +342,15 @@ async function handleComplaint(client, i) {
     if (!canAssign(i)) {
       return i.reply({ content: '⛔ Назначать жалобы могут только роли с доступом «Распределение жалоб». Его выдаёт руководство: /access.', ...EPH });
     }
-    if (c.restricted && !isSenior(i)) {
-      return i.reply({ content: '🔒 Жалобу на руководство назначает только старший состав.', ...EPH });
+    // жалобу на сотрудника ОГП назначают те, кто её рассматривает по иерархии (и ГП с полным доступом)
+    if (reviewerRanks(c) && !can(i, 'full') && !fitsRank(c, rankOfMember(i.member)?.id)) {
+      return i.reply({ content: `🔒 Назначать эту жалобу могут: ${reviewerNames(c).join(', ')}.`, ...EPH });
     }
     const userId = action === 'sel' ? i.values[0] : pickAuto(c);
     if (!userId) {
       return i.reply({
-        content: c.restricted
-          ? '🔒 Нет доступных представителей старшего состава. Выдайте роли право «Старший состав» в `/access panel`.'
+        content: reviewerRanks(c)
+          ? `🔒 Нет доступных сотрудников, которые рассматривают эту жалобу (${reviewerNames(c).join(', ')}).`
           : 'Нет доступных прокуроров. Выдайте роли право «Прокурор» в `/access panel`.',
         ...EPH,
       });
@@ -444,21 +486,25 @@ async function postComplaint(client, t) {
   // пункты жалобы: «Сведения о нарушителе» → уровень жалобы, «Сведения о заявителе» → имя заявителя
   const { violator, applicant } = await fetchComplaintDetails(t.url)
     .catch((e) => { console.error('complaint details:', e.message); return {}; });
-  const restricted = isRestricted(violator) ? 1 : 0;
-  db.prepare(`INSERT INTO complaints(thread_id,number,title,author,url,created_ts,duplicate,posted_ts,replies,violator,restricted,applicant)
-              VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`)
+  // на кого жалоба по иерархии: ЗГП, прокурор… — тогда её получают только те, кто рассматривает эту должность
+  const target = targetRankOf(violator);
+  const restricted = target ? 1 : 0;
+  db.prepare(`INSERT INTO complaints(thread_id,number,title,author,url,created_ts,duplicate,posted_ts,replies,violator,restricted,applicant,target_rank)
+              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(t.id, t.number, t.title, t.author, t.url, t.createdTs, dup, nowTs(), t.replies, violator ?? null, restricted,
-      applicant ?? applicantFromTitle(t.title));
+      applicant ?? applicantFromTitle(t.title), target);
   if (restricted) for (const g of client.guilds.cache.values()) await refreshSeniorFlags(g).catch(() => {});
   // автоназначение «сразу» — карточка выходит уже с исполнителем (настраивается в /settings)
   if (conf.autoAssignSec() === 0) {
     const uid = pickAuto(getComplaint(t.id));
     if (uid) assign(client, getComplaint(t.id), uid, true);
   }
-  // во все каналы «Жалобы»; упоминание старшего состава — ролями того сервера, куда уходит копия
+  // во все каналы «Жалобы»; упоминаем роли тех, кто рассматривает эту жалобу, — ролями сервера, куда уходит копия
+  const reviewers = target ? reviewersOf(target) : [];
   const sent = await sendAll(client, complaintChannels(), (ch) => {
     const payload = messagePayload(getComplaint(t.id));
-    const ping = restricted ? pingIn(ch, roleIdsWith('senior')) : '';
+    const roles = [...(ch.guild?.roles?.cache?.values?.() ?? [])].filter((r) => reviewers.includes(rankOfText(r.name)?.id)).map((r) => r.id);
+    const ping = roles.length ? pingIn(ch, roles) : '';
     if (ping) payload.content = `🔒 ${ping}` + (payload.content ? `\n${payload.content}` : '');
     return payload;
   }, { kind: 'complaint', ref: t.id });
@@ -543,6 +589,16 @@ export async function poll(client, forumUrl) {
 }
 
 /** Перерисовывает карточки жалоб в работе — после обновления бота они сразу в новом виде */
+/** Иерархию поменяли (/hierarchy) — пересчитать, на кого открытые жалобы, и обновить их карточки */
+export async function recomputeTargets(client) {
+  for (const c of db.prepare("SELECT thread_id, violator, target_rank FROM complaints WHERE status IN ('new','assigned','accepted')").all()) {
+    const t = targetRankOf(c.violator);
+    if (t === c.target_rank) continue;
+    db.prepare('UPDATE complaints SET target_rank=?, restricted=? WHERE thread_id=?').run(t, t ? 1 : 0, c.thread_id);
+    await refreshMessage(client, getComplaint(c.thread_id)).catch(() => {});
+  }
+}
+
 export async function refreshOpenCards(client) {
   for (const c of db.prepare(`SELECT * FROM complaints WHERE status IN ('new','assigned','accepted') AND message_id IS NOT NULL`).all()) {
     await refreshMessage(client, c).catch(() => {});
