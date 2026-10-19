@@ -9,6 +9,8 @@ import { conf } from './config.js';
 const OPEN_SQL = `SELECT * FROM complaints WHERE status IN ('assigned','accepted') AND assignee_id IS NOT NULL AND close_by IS NOT NULL`;
 const FORUM_SYNC_MS = 3 * 60_000; // состояние тем на форуме (ответы, закрытие) — раз в 3 минуты
 let lastForumSync = 0;
+// тема удалена с форума (404) — больше её не открываем, иначе каждые 3 минуты одна и та же ошибка в журнале
+try { db.exec('ALTER TABLE complaints ADD COLUMN forum_gone INTEGER NOT NULL DEFAULT 0'); } catch { /* уже есть */ }
 
 /**
  * Сроки по жалобе (от подачи на форуме): напоминания через 24 и 48 ч, дедлайн закрытия — 72 ч,
@@ -73,7 +75,8 @@ async function syncForum(client, forumUrl, res) {
     else missing.push(c);
   }
   // темы, ушедшие дальше 3-й страницы: открываем напрямую, по чуть-чуть, начиная с давно не проверенных
-  const ids = missing.map((c) => c.thread_id);
+  const gone = new Set(db.prepare('SELECT thread_id FROM complaints WHERE forum_gone=1').all().map((r) => r.thread_id));
+  const ids = missing.map((c) => c.thread_id).filter((id) => !gone.has(id));
   const order = new Map(db.prepare(`SELECT thread_id, forum_checked_ts FROM complaints WHERE status IN ('new','assigned','accepted')`)
     .all().map((r) => [r.thread_id, r.forum_checked_ts ?? 0]));
   ids.sort((a, b) => order.get(a) - order.get(b));
@@ -82,9 +85,10 @@ async function syncForum(client, forumUrl, res) {
     try {
       applyState(id, await fetchThreadState(c.url));
     } catch (e) {
-      // тема удалена или недоступна — отметим проверку, чтобы не застревать на ней
-      db.prepare('UPDATE complaints SET forum_checked_ts=? WHERE thread_id=?').run(nowTs(), id);
-      console.error(`forum: тема ${id}: ${e.message}`);
+      // тема удалена — больше не проверяем; другая ошибка — отметим проверку, чтобы не застревать на ней
+      const deleted = /HTTP 404/.test(e.message);
+      db.prepare(`UPDATE complaints SET forum_checked_ts=?${deleted ? ', forum_gone=1' : ''} WHERE thread_id=?`).run(nowTs(), id);
+      console.warn(`forum: тема ${id}${deleted ? ' удалена с форума — больше не проверяется' : `: ${e.message}`}`);
     }
   }
 }

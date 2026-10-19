@@ -294,7 +294,7 @@ async function viaOpenAICompatible(p, text, type) {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p.key}` },
     body: JSON.stringify({
       model: p.model,
-      max_tokens: 1500,
+      max_tokens: maxTokens(type),
       temperature: 0.2,
       messages: [
         { role: 'system', content: systemFor(type) },
@@ -309,6 +309,9 @@ async function viaOpenAICompatible(p, text, type) {
   const out = String(data?.choices?.[0]?.message?.content ?? '').replace(/\*\*/g, '').trim();
   return answerFrom(out);
 }
+
+/** Длина ответа: законопроект с «Было / Стало» по каждой статье бывает большим — ему больше места */
+const maxTokens = (type) => (type === 'bill' ? 6000 : 2500);
 
 async function viaAI(text, type) {
   const p = provider();
@@ -380,7 +383,7 @@ async function viaClaude(p, text, type) {
   // без режима размышлений: для выписки сути он не нужен, а оплачивается как ответ
   const body = {
     model: p.model,
-    max_tokens: 1500,
+    max_tokens: maxTokens(type),
     system: systemFor(type),
     messages: [{ role: 'user', content: docMessage(text, type) }],
   };
@@ -690,7 +693,7 @@ export function heuristic(withLinks, type) {
  */
 db.exec(`CREATE TABLE IF NOT EXISTS ai_cache (key TEXT PRIMARY KEY, result TEXT NOT NULL, created_ts INTEGER NOT NULL)`);
 const KEEP_DAYS = 180;
-const cacheKey = (text, type) => `v9:${type}:${createHash('sha256').update(text.replace(/\s+/g, ' ').trim()).digest('hex')}`;
+const cacheKey = (text, type) => `${type === 'bill' ? 'v10' : 'v9'}:${type}:${createHash('sha256').update(text.replace(/\s+/g, ' ').trim()).digest('hex')}`;
 const fromCache = (key) => db.prepare('SELECT result FROM ai_cache WHERE key=?').get(key)?.result ?? null;
 function toCache(key, result) {
   db.prepare('INSERT OR REPLACE INTO ai_cache(key,result,created_ts) VALUES(?,?,?)').run(key, result, nowTs());
@@ -733,8 +736,11 @@ export async function analyzeText(text, type, userId = null, { paid = true } = {
 
 /** «Суть:» и «Требования:» — жирным; остальной текст экранируется */
 export function formatResult(text) {
+  return formatLines(text).join('\n');
+}
+/** Строки готового ответа (без ограничения длины — на страницы делит resultEmbeds) */
+function formatLines(text) {
   const lines = [];
-  let size = 0;
   // «Суть: текст» в одну строку → заголовок отдельно, текст ниже
   const norm = String(text).replace(/\*\*/g, '')
     .replace(/^(Суть|Требования|Изменения|Основные положения|Отменяется|Проверка|Материалы дела|Доказательства|Ссылки):[ \t]+(?=\S)/gm, '$1:\n');
@@ -747,12 +753,19 @@ export function formatResult(text) {
     if (head) out = `${lines.length ? '\n' : ''}**${safeText(head[1])}:**`; // раздел — с отступом сверху
     else if (field) out = `**${safeText(field[1])}:** ${linkify(field[2])}`;
     else out = linkify(line);
-    // лимит Discord — 4096 символов; обрезаем по строкам, чтобы не разрезать ссылку
-    if (size + out.length + 1 > 4000) { lines.push('…'); break; }
     lines.push(out);
-    size += out.length + 1;
   }
-  return lines.join('\n');
+  return lines;
+}
+/** Делит строки на страницы до size символов, не разрезая строку (и ссылку в ней) */
+function pages(lines, size) {
+  const out = [''];
+  for (const raw of lines) {
+    const line = raw.length > size ? `${raw.slice(0, size - 1)}…` : raw;
+    if (out.at(-1).length + line.length + 1 > size) out.push(line.replace(/^\n/, ''));
+    else out[out.length - 1] += (out.at(-1) ? '\n' : '') + line;
+  }
+  return out.filter(Boolean);
 }
 /** «Суть:», «Материалы дела:» — строка-заголовок раздела */
 const HEAD = /^([А-ЯЁA-Z][А-Яа-яЁё ]{2,30}):\s*$/u;
@@ -772,18 +785,24 @@ function linkify(s) {
     (_, x, y) => ((x ?? y).trim() ? `**${(x ?? y).trim()}**` : ''));
 }
 
-export function resultEmbed({ title, url, typeLabel, text, ai, cached, limited, noAccess, warnings = [] }) {
+export const resultEmbed = (o) => resultEmbeds(o)[0];
+/**
+ * Разбор целиком: большой (длинный законопроект) — несколькими карточками «1/3, 2/3…», ничего не обрезается.
+ * В одном сообщении Discord — до 6000 символов во всех карточках, поэтому каждая карточка уходит своим сообщением.
+ */
+export function resultEmbeds({ title, url, typeLabel, text, ai, cached, limited, noAccess, warnings = [] }) {
   // внизу, как везде: «ОГП • дата MSK» и способ разбора
   const note = noAccess ? ' • упрощённый разбор: нет доступа к ИИ' : limited ? ' • лимит разборов ИИ на час исчерпан, упрощённый разбор'
     : !ai ? ' • упрощённый разбор без ИИ' : cached ? ' • сохранённый разбор' : '';
   // в «Проверке» найдены расхождения — карточка жёлтая
   const flagged = /^Проверка:\s*\n(?!1\.\s*(?:Явных р|Р)асхождений)/m.test(String(text).replace(/\*\*/g, ''));
   const head = warnings.length ? `${warnings.map((w) => `⚠️ ${safeText(w)}`).join('\n')}\n\n` : '';
-  return new EmbedBuilder().setColor(flagged ? C.warn : C.details)
-    .setTitle(clip(`📄 ${typeLabel}${title ? ` — ${title}` : ''}`, 256))
+  const parts = pages(formatLines(text), 4000 - head.length);
+  return parts.map((part, k) => new EmbedBuilder().setColor(flagged ? C.warn : C.details)
+    .setTitle(clip(`📄 ${typeLabel}${title ? ` — ${title}` : ''}`, 240) + (parts.length > 1 ? ` (${k + 1}/${parts.length})` : ''))
     .setURL(url)
-    .setDescription(head + formatResult(text).slice(0, 4096 - head.length))
-    .setFooter({ text: stamp() + note });
+    .setDescription((k ? '' : head) + part)
+    .setFooter({ text: stamp() + note }));
 }
 
 /* ---------- кто может пользоваться ИИ ---------- */
@@ -852,10 +871,9 @@ export async function analyze(client, i) {
     return i.editReply({ content: `⚠️ ${e instanceof DocError ? e.message : id ? 'Не удалось открыть документ.' : 'Не удалось открыть тему форума.'}` });
   }
   const r = await analyzeText(text, type, i.user.id);
-  return i.editReply({
-    embeds: [resultEmbed({ title, url: link, typeLabel: TYPES[type].label, ...r, warnings: docWarnings(text, hidden) })],
-    __noLogo: true,
-  });
+  const [first, ...rest] = resultEmbeds({ title, url: link, typeLabel: TYPES[type].label, ...r, warnings: docWarnings(text, hidden) });
+  await i.editReply({ embeds: [first], __noLogo: true });
+  for (const e of rest) await i.followUp({ embeds: [e], ...EPH, __noLogo: true });
 }
 
 /** Предупреждения над разбором: скрытый текст и фразы-команды для ИИ (на разбор они не влияют) */
