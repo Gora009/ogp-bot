@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { Client, GatewayIntentBits } from 'discord.js';
 import {
-  COMMAND_PERMS, can, denyText, handleAccess, setAccessChangeHook, setAccessClient, syncProsecutorRecord, trustedUsers,
+  COMMAND_PERMS, can, denyText, setAccessChangeHook, setAccessClient, syncProsecutorRecord, trustedUsers,
 } from './access.js';
 import { installPeopleSync, scheduleSync, syncPeople } from './people.js';
 import { initAllowedGuilds, isAllowedGuild, leaveIfForeign } from './guard.js';
@@ -54,7 +54,7 @@ const commandHandlers = {
 /** Кнопки, списки и формы → обработчики по префиксу customId */
 const componentHandlers = {
   c: handleComponent, case: cases.handleCase, faq: handleFaq, mnt: mnt.handleMentoring,
-  res: res.handleResign, vac: vac.handleVac, cab: handleCab, auto: handleAuto, acc: handleAccess, set: handleSettings, form: handleForm, doc: handleDoc,
+  res: res.handleResign, vac: vac.handleVac, cab: handleCab, auto: handleAuto, set: handleSettings, form: handleForm, doc: handleDoc,
 };
 
 const loop = (name, ms, fn) => {
@@ -65,7 +65,7 @@ const loop = (name, ms, fn) => {
   run();
 };
 
-/** Все текстовые ответы бота оформляются карточками в едином стиле (см. prettyPayload) */
+/** Общая обработка ответов бота (см. prettyPayload) */
 function prettify(i) {
   for (const m of ['reply', 'editReply', 'followUp', 'update']) {
     if (typeof i[m] !== 'function') continue;
@@ -100,12 +100,12 @@ async function route(client, i) {
 }
 
 /**
- * Server Members Intent нужен для /register_prosecutors, /sync_judges, /check_members и роли «Отпуск».
+ * Server Members Intent нужен для сверки баз сотрудников, /check_members и роли «Отпуск».
  * Если он не включён в Developer Portal, бот не падает, а запускается без него (эти функции тогда недоступны).
  * Принудительно без него: USE_MEMBERS_INTENT=0.
  */
 function boot(useMembers) {
-  if (!useMembers) console.warn('⚠️ Запуск без Server Members Intent: /register_prosecutors, /sync_judges, /check_members и роль «Отпуск» не работают. Включите интент в Developer Portal → Bot.');
+  if (!useMembers) console.warn('⚠️ Запуск без Server Members Intent: сверка баз, /check_members и роль «Отпуск» не работают. Включите интент в Developer Portal → Bot.');
   const client = new Client({
     intents: [GatewayIntentBits.Guilds, ...(useMembers ? [GatewayIntentBits.GuildMembers] : [])],
     // бот упоминает только конкретных людей и роли; @everyone/@here не сработают ни при каком тексте
@@ -118,7 +118,7 @@ function boot(useMembers) {
     admin.registerGuildCommands(client, g);
   });
   setAccessClient(client); // права по названиям ролей серверов
-  // базы прокуроров и судей — по ролям, без /register_prosecutors
+  // базы прокуроров и судей — по ролям
   installPeopleSync(client);
   setAccessChangeHook(() => scheduleSync(client));
 

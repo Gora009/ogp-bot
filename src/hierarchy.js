@@ -5,13 +5,13 @@ import { db, getSetting, setSetting } from './db.js';
  *  • ключевые слова — по ним бот узнаёт должность и в названиях ролей Discord, и в пункте жалобы «Сведения о нарушителе»;
  *  • список должностей, жалобы на которые она рассматривает.
  * Жалоба на должность из списка достаётся только тем, кто её рассматривает (ЗГП → прокуроров и т.д.).
- * Жалоба не на сотрудника ОГП (LSPD, EMS…) — любому прокурору, как обычно. Настраивается командой /hierarchy.
+ * Жалоба не на сотрудника ОГП (LSPD, EMS…) — любому прокурору, как обычно. Настраивается в /settings → Иерархия.
  */
 db.exec(`CREATE TABLE IF NOT EXISTS ranks (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, keywords TEXT NOT NULL DEFAULT '', sort INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS rank_reviews (reviewer INTEGER NOT NULL, target INTEGER NOT NULL, PRIMARY KEY (reviewer, target));`);
 
-/** Начальная иерархия — как описано руководством; меняется /hierarchy */
+/** Начальная иерархия — как описано руководством; меняется в /settings */
 const DEFAULTS = [
   ['ГП', ['генеральный прокурор', 'гп'], ['Первый ЗГП', 'ЗГП', 'СГП', 'Прокурор', 'Помощник прокурора']],
   ['Первый ЗГП', ['первый заместитель', 'первый згп', '1 згп', '1 й згп', '1 ый заместитель', '1 й заместитель', '1 заместитель'], ['ЗГП', 'СГП', 'Прокурор', 'Помощник прокурора']],
@@ -80,7 +80,7 @@ export function rankOfMember(member) {
   return best;
 }
 
-/* ---------- изменение (/hierarchy) ---------- */
+/* ---------- изменение (/settings → Иерархия) ---------- */
 export function setReviews(name, targetNames) {
   const r = rankByName(name);
   if (!r) return { error: `Нет должности «${name}».` };
@@ -120,7 +120,7 @@ export function setKeywordsOf(name, keywords) {
   return { ok: true };
 }
 
-/** Текст для /hierarchy list и /settings */
+/** Текст иерархии списком */
 export function hierarchyLines() {
   const all = ranks();
   const nameOf = (id) => all.find((r) => r.id === id)?.name ?? '?';

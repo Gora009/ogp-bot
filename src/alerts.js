@@ -41,7 +41,7 @@ const alertButtons = (c, kind) => [
 ];
 
 /** Кого упомянуть — только ответственных за дедлайны (люди, без ролей), как в оригинале.
- *  Список — /settings → Жалобы или /deadline_responsible. */
+ *  Список — /settings → Жалобы. */
 export function alertPing(ch = null) {
   return db.prepare('SELECT user_id FROM deadline_responsible').all().map((r) => `<@${r.user_id}>`).join(' ');
 }

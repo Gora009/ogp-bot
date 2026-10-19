@@ -35,15 +35,15 @@ export function caseEmbed(c) {
       { name: 'Номер дела', value: numberOf(c), inline: true },
       { name: 'Статус', value: STATUS[c.status], inline: true },
       { name: 'Прокурор', value: `<@${c.prosecutor_id}>`, inline: true },
-      { name: 'Обвиняемый', value: c.accused, inline: true },
-      { name: 'Паспорт', value: c.passport, inline: true },
-      { name: 'Дата возбуждения', value: c.opened_date, inline: true },
+      { name: 'Обвиняемый', value: safeText(c.accused), inline: true },
+      { name: 'Паспорт', value: safeText(c.passport), inline: true },
+      { name: 'Дата возбуждения', value: safeText(c.opened_date), inline: true },
     )
     .setFooter({ text: stamp(c.created_ts) });
   // решение по одобренному делу — отдельной строкой, чтобы статус не переносился
   if (c.status === 'approved' && c.action) e.addFields({ name: 'Решение', value: actionText(c) });
   e.addFields({ name: 'Документ', value: docLink(c.document) });
-  if (c.status === 'rework' && c.comment) e.addFields({ name: 'Комментарий к доработке', value: c.comment });
+  if (c.status === 'rework' && c.comment) e.addFields({ name: 'Комментарий к доработке', value: safeText(c.comment) });
   return e;
 }
 
@@ -88,7 +88,7 @@ export function reviewEmbed(c) {
 const ACTIONS = {
   court: { label: 'Отправить в суд', emoji: '📨', plain: () => 'Отправлено в суд' },
   warrant: { label: 'Выдать ордер', emoji: '📋', plain: () => 'Будет выдан ордер' },
-  fine: { label: 'Назначить штраф', emoji: '💰', plain: (c) => `Штраф: ${c.action_value}` },
+  fine: { label: 'Назначить штраф', emoji: '💰', plain: (c) => `Штраф: ${safeText(c.action_value)}` },
 };
 /** Действие по делу со значком — в карточке и в ЛС («💰 Штраф: $1 123») */
 const actionText = (c) => (ACTIONS[c.action] ? `${ACTIONS[c.action].emoji} ${ACTIONS[c.action].plain(c)}` : '');
@@ -143,7 +143,7 @@ const reviewComponents = (uin) => {
 async function chooseAction(client, i) {
   const c = getCase(i.customId.split(':')[2]);
   if (!c) return i.reply({ content: 'Дело не найдено.', ...EPH });
-  if (!canDecide(i)) return i.reply({ content: '⛔ Нет прав.', ...EPH });
+  if (!canDecide(i, c)) return denyDecide(i, c);
   if (c.status !== 'approved' || c.action) return i.update({ embeds: [reviewEmbed(c)], components: reviewComponents(c.uin) });
   const v = i.values[0];
   if (v === 'fine') {
@@ -166,15 +166,17 @@ async function applyAction(client, i, c, action, value) {
 
 const canSee = (i, c) => c.prosecutor_id === i.user.id || isLeader(i) || isJudge(i);
 /** Решение по делу (одобрить / на доработку / отклонить, действие): старший состав прокуратуры; судьи — тоже */
-const canDecide = (i) => isSenior(i) || isLeader(i) || isJudge(i);
+// своё дело решает другой (кроме ГП с полным доступом)
+const canDecide = (i, c) => (isSenior(i) || isLeader(i) || isJudge(i)) && (c.prosecutor_id !== i.user.id || can(i, 'full'));
+const denyDecide = (i, c) => i.reply({ content: c.prosecutor_id === i.user.id ? '⛔ Решение по своему делу принимает другой сотрудник.' : '⛔ Нет прав.', ...EPH });
 
 /* ---------- регистрация дела: команда /register_case и панель «Уголовные дела» ---------- */
-/** Если роли выбраны через /access (право «Регистрация дел») — только они и руководство; иначе зарегистрированные прокуроры. */
+/** Если роли выбраны в /settings (право «Регистрация дел») — только они и руководство; иначе зарегистрированные прокуроры. */
 function canRegister(i) {
   if (isLeader(i)) return true;
   return hasRulesFor('case_register') ? can(i, 'case_register') : isProsecutor(i.user.id);
 }
-const denyRegister = (i) => i.reply({ content: '⛔ Регистрировать дела могут только выбранные роли. Доступ выдаёт руководство в /settings → Доступ.', ...EPH });
+const denyRegister = (i) => i.reply({ content: '⛔ Нет прав: регистрировать дела могут прокуроры.', ...EPH });
 
 async function createCase(client, i, { owner, number, accused, passport, date, document }) {
   if (![accused, date, document].every(Boolean)) return i.reply({ content: '⚠️ Заполните ссылку на документ, ФИО обвиняемого и дату.', ...EPH });
@@ -283,7 +285,7 @@ export async function casesStats(client, i) {
 }
 
 export function caseLines(rows) {
-  return rows.map((c) => `• **${c.uin}** — ${c.accused} — ${STATUS[c.status]}`).join('\n') || 'Дел нет.';
+  return rows.map((c) => `• **${c.uin}** — ${safeText(c.accused)} — ${STATUS[c.status]}`).join('\n') || 'Дел нет.';
 }
 
 export async function myCases(client, i) {
@@ -404,7 +406,7 @@ const fineModal = (id) => new ModalBuilder().setCustomId(id).setTitle('Назн�
 async function approveStep(client, i, action) {
   const c = getCase(i.customId.split(':')[2]);
   if (!c) return i.reply({ content: 'Дело не найдено.', ...EPH });
-  if (!canDecide(i)) return i.reply({ content: '⛔ Нет прав.', ...EPH });
+  if (!canDecide(i, c)) return denyDecide(i, c);
   const done = { embeds: [reviewEmbed(c)], components: reviewComponents(c.uin) };
   if (c.status !== 'pending') return i.update(done); // уже решено (двойное нажатие)
   if (action === 'apx') return i.update({ components: reviewComponents(c.uin) });
@@ -418,7 +420,7 @@ async function approveStep(client, i, action) {
 async function decide(client, i) {
   const c = getCase(i.customId.split(':')[2]);
   if (!c) return i.reply({ content: 'Дело не найдено.', ...EPH });
-  if (!canDecide(i)) return i.reply({ content: '⛔ Нет прав.', ...EPH });
+  if (!canDecide(i, c)) return denyDecide(i, c);
   // решение уже принято (старая карточка со списком) — не меняем, только убираем выбор с карточки
   if (c.status !== 'pending') return i.update({ embeds: [reviewEmbed(c)], components: reviewComponents(c.uin) });
   const v = i.values[0];
@@ -436,7 +438,7 @@ async function decide(client, i) {
 async function submitRework(client, i) {
   const c = getCase(i.customId.split(':')[2]);
   if (!c) return i.reply({ content: 'Дело не найдено.', ...EPH });
-  if (!canDecide(i)) return i.reply({ content: '⛔ Нет прав.', ...EPH });
+  if (!canDecide(i, c)) return denyDecide(i, c);
   if (c.status !== 'pending') return i.reply({ content: 'По делу уже принято решение.', ...EPH });
   const f = await finalize(client, i, c, 'rework', i.fields.getTextInputValue('comment').trim());
   const payload = { embeds: [reviewEmbed(f)], components: reviewComponents(f.uin) };
@@ -480,7 +482,7 @@ async function routeCase(client, i, action) {
   if (action === 'finem') {
     const c = getCase(i.customId.split(':')[2]);
     if (!c) return i.reply({ content: 'Дело не найдено.', ...EPH });
-    if (!canDecide(i)) return i.reply({ content: '⛔ Нет прав.', ...EPH });
+    if (!canDecide(i, c)) return denyDecide(i, c);
     return applyAction(client, i, c, 'fine', money(i.fields.getTextInputValue('sum')));
   }
 }

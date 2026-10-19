@@ -1,6 +1,6 @@
 import { db } from './db.js';
 
-/* Кого считать «жалобой на руководство» — теперь решает иерархия (src/hierarchy.js, /hierarchy). */
+/* Кого считать «жалобой на руководство» — теперь решает иерархия (src/hierarchy.js). */
 const norm = (s) => String(s).toLowerCase().replace(/ё/g, 'е');
 
 /**

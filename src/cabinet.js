@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { db } from './db.js';
 import { STATUS as CASE_STATUS } from './cases.js';
 import { positionOf } from './roles.js';
-import { COLOR, EPH, isOnVacation, mskDate, nowTs, stamp } from './util.js';
+import { COLOR, EPH, isOnVacation, mskDate, nowTs, safeText, stamp } from './util.js';
 
 /**
  * /cabinet — личный кабинет, как в оригинале:
@@ -111,14 +111,14 @@ export function render(i, view = 'main', period = 'all', p = 0, names = new Map(
     const pg = page(rows, p);
     p = pg.n;
     e.setTitle('📋 Мои жалобы').setDescription(pg.items.map((c) =>
-      `${COMPLAINT_DOT(c)} **№${c.number ?? '?'}** | ${mskDate(c.created_ts)}\n└ ${clip(c.title ?? '', 48)}`).join('\n\n') || 'Нет жалоб')
+      `${COMPLAINT_DOT(c)} **№${c.number ?? '?'}** | ${mskDate(c.created_ts)}\n└ ${safeText(clip(c.title ?? '', 48))}`).join('\n\n') || 'Нет жалоб')
       .setFooter({ text: `Страница ${pg.n + 1}/${pg.pages} • Всего: ${rows.length}` });
   } else if (view === 'cases') {
     const rows = db.prepare('SELECT * FROM cases WHERE prosecutor_id=? ORDER BY created_ts DESC').all(uid);
     const pg = page(rows, p);
     p = pg.n;
     e.setTitle('📁 Мои дела').setDescription(pg.items.map((c) =>
-      `${(CASE_STATUS[c.status] ?? '•').split(' ')[0]} **${c.uin}** | ${mskDate(c.created_ts)}\n└ ${clip(c.accused ?? '—', 48)}`).join('\n\n') ||
+      `${(CASE_STATUS[c.status] ?? '•').split(' ')[0]} **${c.uin}** | ${mskDate(c.created_ts)}\n└ ${safeText(clip(c.accused ?? '—', 48))}`).join('\n\n') ||
       'Нет уголовных дел')
       .setFooter({ text: `Страница ${pg.n + 1}/${pg.pages} • Всего: ${rows.length}` });
   } else if (view === 'vacation') {
@@ -172,7 +172,7 @@ export function render(i, view = 'main', period = 'all', p = 0, names = new Map(
                                  SUM(CASE WHEN status='approved' THEN (end_ts-start_ts)/86400+1 ELSE 0 END) days
                           FROM vacations WHERE created_ts>=?`).get(n, n, n, n, from);
     const now = db.prepare(`SELECT user_id FROM vacations WHERE status='approved' AND start_ts<=? AND end_ts>=?`).all(n, n)
-      .map((v) => names.get(v.user_id) ?? `<@${v.user_id}>`);
+      .map((v) => (names.has(v.user_id) ? safeText(names.get(v.user_id)) : `<@${v.user_id}>`));
     e.setTitle('📈 Статистика отпусков').setDescription([
       `📈 **Период:** ${PERIODS[period]}`, '',
       '**Статистика отпусков:**',

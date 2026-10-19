@@ -1,34 +1,26 @@
-import {
-  ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, ContainerBuilder, EmbedBuilder, MessageFlags,
-  RoleSelectMenuBuilder, SectionBuilder, SeparatorBuilder, TextDisplayBuilder, ThumbnailBuilder,
-  UserSelectMenuBuilder,
-} from 'discord.js';
-import { fileURLToPath } from 'node:url';
 import { db } from './db.js';
-import { C, COLOR, EPH, cfg, stamp } from './util.js';
+import { cfg } from './util.js';
 import { namePerms, positionOf } from './roles.js';
 import { rankOfMember } from './hierarchy.js';
 
 db.exec(`CREATE TABLE IF NOT EXISTS access (
   target_id TEXT NOT NULL, kind TEXT NOT NULL, perm TEXT NOT NULL, PRIMARY KEY (target_id, perm))`);
 
-/** Права, которые можно выдавать роли или пользователю через /access */
+/** Права, которые выдаются ролям и людям в /settings → Доступ */
 export const PERMS = {
-  full: ['Полный доступ', 'всё, включая саму настройку доступа и иерархии (/settings)'],
-  setup: ['Настройка панелей', '/setup, /panels_list, /panel_delete, /sync'],
-  staff: ['Управление сотрудниками', 'сверка баз сотрудников, /check_members, /invite_missing, /clear_all_dm'],
-  monitor: ['Мониторинг и дедлайны', 'упоминается в канале «Просроченные дедлайны», продлевает дедлайны и закрывает просроченные жалобы; ' +
-    '/force_parse, /debug_forum, /check_deadlines'],
-  approve: ['Одобрение заявок', 'кнопки одобрения отпусков и увольнений, /cancel_vacation, продление дедлайнов, ' +
-    'действия с чужими жалобами, просмотр всех дел. Эта роль упоминается в новых заявках'],
-  assign: ['Распределение жалоб', 'выбор прокурора и «Авто» в новых жалобах, переназначение чужих жалоб'],
-  judge: ['Судья', 'решения по уголовным делам (одобрить / на доработку / отклонить)'],
-  prosecutor: ['Прокурор', 'получает жалобы; в базу прокуроров бот вносит сам, по ролям'],
-  senior: ['Старший состав', 'получает жалобы на руководство и сотрудников офиса, принимает решения по уголовным делам, /broadcast (СГП, ЗГП, ГП)'],
-  case_register: ['Регистрация дел', 'кнопка «Зарегистрировать дело» на панели и /register_case'],
-  mentoring: ['Кураторство', 'добавлять кураторов через панель, продлевать сроки, отказ за куратора, /curators'],
-  ai: ['Разбор документов (ИИ)', '/analyze и «Краткое содержание» в жалобах. Пока никому не выдано — пользуются все сотрудники прокуратуры и судьи'],
-  mentoring_text: ['Текст инструкции кураторства', 'изменять текст, который показывает кнопка «Инструкция» (обычно Генеральный прокурор)'],
+  full: ['Полный доступ', 'Всё, включая доступ и иерархию'],
+  setup: ['Настройка панелей', '/settings, /setup, /panels_list, /panel_delete, /sync'],
+  staff: ['Управление сотрудниками', '/check_members, /invite_missing, /clear_all_dm'],
+  monitor: ['Мониторинг и дедлайны', 'Продление дедлайнов, закрытие просроченных жалоб, /force_parse, /debug_forum, /check_deadlines'],
+  approve: ['Одобрение заявок', 'Отпуска и увольнения, /cancel_vacation, чужие жалобы и дела. Упоминается в новых заявках'],
+  assign: ['Распределение жалоб', 'Назначение и переназначение жалоб'],
+  judge: ['Судья', 'Решения по уголовным делам'],
+  prosecutor: ['Прокурор', 'Получает жалобы'],
+  senior: ['Старший состав', 'Жалобы на сотрудников ОГП, решения по делам, /broadcast'],
+  case_register: ['Регистрация дел', 'Регистрация уголовных дел'],
+  mentoring: ['Кураторство', 'Кураторы и сроки кураторства, /curators'],
+  ai: ['Разбор документов (ИИ)', '/analyze и «Краткое содержание». Пока не выдано — доступно всем сотрудникам и судьям'],
+  mentoring_text: ['Текст инструкции кураторства', 'Текст кнопки «Инструкция»'],
 };
 
 /** Права управления: только они выводят бота из режима первичной настройки (панельные права — нет). */
@@ -36,15 +28,14 @@ const MANAGEMENT = ['full', 'setup', 'staff', 'monitor', 'approve'];
 
 /** Какое право нужно для команды. Команд, которых здесь нет, могут пользоваться все. */
 export const COMMAND_PERMS = {
-  access: 'full', autosetup: 'full',
   setup: 'setup', panels_list: 'setup', panel_delete: 'setup', sync: 'setup',
-  register_prosecutors: 'staff', sync_judges: 'staff', check_members: 'staff', invite_missing: 'staff',
+  check_members: 'staff', invite_missing: 'staff',
   broadcast: 'senior', clear_all_dm: 'staff', // рассылка — весь старший состав (СГП, ЗГП, ГП)
   cancel_vacation: 'approve',
-  force_parse: 'monitor', debug_forum: 'monitor', check_deadlines: 'monitor', deadline_responsible: 'monitor',
+  force_parse: 'monitor', debug_forum: 'monitor', check_deadlines: 'monitor',
   check_responsible: 'monitor',
   curators: 'mentoring',
-  hierarchy: 'full', distribution: 'assign', settings: 'setup',
+  distribution: 'assign', settings: 'setup',
 };
 
 /** Всегда имеют полный доступ: ADMIN_USER_IDS из .env и владелец(цы) приложения (добавляются при старте) */
@@ -130,11 +121,10 @@ const WHO = {
 };
 const ACTION = {
   panels_list: 'просматривать панели', setup: 'настраивать панели', panel_delete: 'удалять панели', sync: 'синхронизировать команды',
-  access: 'настраивать доступ', autosetup: 'запускать автонастройку', settings: 'открывать настройки бота',
-  hierarchy: 'настраивать иерархию', distribution: 'менять распределение жалоб', register_prosecutors: 'сверять базу прокуроров', sync_judges: 'сверять базу судей',
+  settings: 'открывать настройки бота', distribution: 'менять распределение жалоб',
   check_members: 'проверять участников', invite_missing: 'рассылать приглашения', broadcast: 'делать рассылку',
   clear_all_dm: 'удалять ЛС бота', cancel_vacation: 'отменять отпуска', force_parse: 'запускать парсинг форума',
-  debug_forum: 'отлаживать парсер', check_deadlines: 'проверять дедлайны', deadline_responsible: 'назначать ответственных',
+  debug_forum: 'отлаживать парсер', check_deadlines: 'проверять дедлайны',
   check_responsible: 'проверять ответственных', curators: 'просматривать кураторства',
 };
 export const denyText = (command, perm) => `❌ ${WHO[perm] ?? 'Нет прав:'} ${ACTION[command] ?? 'использовать эту команду'}.`;
@@ -156,7 +146,7 @@ export function syncProsecutorRecord(member) {
   const rank = rankOfMember(member);
   if (senior || memberHas(member, 'prosecutor') || rank) {
     const name = member.displayName ?? member.user?.username ?? member.id;
-    // должность — из иерархии (/hierarchy), иначе по правилам ролей
+    // должность — из иерархии (/settings → Иерархия), иначе по правилам ролей
     const position = rank?.name ?? positionOf(member);
     const rankId = rank?.id ?? null;
     if (!row || row.name !== name || row.senior !== senior || row.position !== position || row.rank_id !== rankId) {
@@ -192,141 +182,8 @@ export const isJudge = (i) => can(i, 'judge') || !!db.prepare('SELECT 1 FROM jud
 /** Упоминания ролей, которые должны видеть новые заявки */
 export const leaderPing = () => roleIdsWith('approve').map((r) => `<@&${r}>`).join(' ');
 
-/* ---------- /access ---------- */
-const who = (perm) => {
-  const items = [...roleIdsWith(perm).map((r) => `<@&${r}>`), ...userIdsWith(perm).map((u) => `<@${u}>`)];
-  return items.join(' ') || '—';
-};
-
-const BOOTSTRAP_NOTE = '⚠️ Права руководства ещё не выданы: сейчас всё могут только владелец сервера и владелец бота. ' +
-  'Выдайте «Полный доступ» роли ГП и остальные права в /settings → Доступ.';
-const ALWAYS = () => 'Владелец сервера и владелец приложения' + (cfg('ADMIN_USER_IDS') ? ', пользователи из ADMIN_USER_IDS' : '');
-
-const listEmbed = () => new EmbedBuilder().setColor(COLOR).setTitle('🔐 Доступ к функциям бота')
-  .setDescription(hasAnyRules() ? 'Доступ выдаётся только по правилам ниже.' : BOOTSTRAP_NOTE)
-  .addFields(
-    ...Object.entries(PERMS).map(([k, [name, what]]) => ({ name: `${name} (\`${k}\`)`, value: `${who(k)}\n-# ${what}` })),
-    { name: 'Всегда имеют доступ', value: ALWAYS() })
-  .setFooter({ text: stamp() });
-
-/* ---------- /access panel: список прав, у каждого ➕; внутри — роли с ✖ ---------- */
-const PERM_EMOJI = {
-  full: '👑', setup: '🔧', staff: '👥', monitor: '⏰', approve: '✅', assign: '📝', judge: '⚖️',
-  prosecutor: '👤', senior: '⭐', case_register: '📂', mentoring: '🎓', mentoring_text: '📖', ai: '🤖',
-};
-const LOGO = 'attachment://logo.webp';
-const LOGO_FILE = fileURLToPath(new URL('../assets/logo.webp', import.meta.url));
-const MAX_ROWS = 9; // лимит Discord — 40 элементов на сообщение; остальных показываем списком
-const V2 = MessageFlags.IsComponentsV2;
-
-const text = (t) => new TextDisplayBuilder().setContent(t);
-const header = (t) => new SectionBuilder().addTextDisplayComponents(text(t))
-  .setThumbnailAccessory(new ThumbnailBuilder().setURL(LOGO));
-const holders = (perm) => [...roleIdsWith(perm).map((r) => `<@&${r}>`), ...userIdsWith(perm).map((u) => `<@${u}>`)];
-
-/** Главный экран: все права списком, рядом с каждым — ➕ */
-function homeView() {
-  const c = new ContainerBuilder().setAccentColor(C.info).addSectionComponents(header([
-    '## 🔐 Доступ к функциям бота',
-    hasAnyRules()
-      ? '-# Нажмите «+ Роли» рядом с правом, чтобы добавить или убрать роли'
-      : '-# Права руководства ещё не выданы: всё могут только владелец сервера и владелец бота',
-  ].join('\n')));
-  for (const [k, [name]] of Object.entries(PERMS)) {
-    const who = holders(k);
-    c.addSectionComponents(new SectionBuilder()
-      .addTextDisplayComponents(text(`**${PERM_EMOJI[k]} ${name}**\n${who.join(' ') || '-# не выдано'}`))
-      .setButtonAccessory(new ButtonBuilder().setCustomId(`acc:open:${k}`).setLabel('+ Роли').setStyle(ButtonStyle.Primary)));
-  }
-  return { components: [c], flags: V2 };
-}
-
-/** Экран одного права: каждая роль и человек — отдельной строкой с ✖, внизу «добавить» */
-function permView(perm, note = '') {
-  const [name, what] = PERMS[perm];
-  const items = [
-    ...roleIdsWith(perm).map((id) => ({ id, kind: 'r', label: `<@&${id}>` })),
-    ...userIdsWith(perm).map((id) => ({ id, kind: 'u', label: `<@${id}>` })),
-  ];
-  const c = new ContainerBuilder().setAccentColor(C.info).addSectionComponents(header(
-    `## ${PERM_EMOJI[perm]} ${name}\n${what}` + (note ? `\n\n${note}` : '')));
-  c.addSeparatorComponents(new SeparatorBuilder());
-  if (!items.length) c.addTextDisplayComponents(text('-# Пока никому не выдано — добавьте роль ниже'));
-  for (const it of items.slice(0, MAX_ROWS)) {
-    c.addSectionComponents(new SectionBuilder().addTextDisplayComponents(text(it.label))
-      .setButtonAccessory(new ButtonBuilder().setCustomId(`acc:rm:${perm}:${it.kind}:${it.id}`)
-        .setLabel('✕ Убрать').setStyle(ButtonStyle.Danger)));
-  }
-  if (items.length > MAX_ROWS) {
-    c.addTextDisplayComponents(text(`Ещё: ${items.slice(MAX_ROWS).map((x) => x.label).join(' ')}\n-# убрать их можно командой /access revoke`));
-  }
-  c.addActionRowComponents(
-    new ActionRowBuilder().addComponents(new RoleSelectMenuBuilder().setCustomId(`acc:addr:${perm}`)
-      .setPlaceholder('➕ Добавить роль').setMinValues(1).setMaxValues(10)),
-    new ActionRowBuilder().addComponents(new UserSelectMenuBuilder().setCustomId(`acc:addu:${perm}`)
-      .setPlaceholder('➕ Добавить пользователя').setMinValues(1).setMaxValues(10)),
-    new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('acc:home')
-      .setLabel('Все права').setEmoji('◀️').setStyle(ButtonStyle.Secondary)));
-  return { components: [c], flags: V2 };
-}
-
-export async function handleAccess(client, i) {
-  if (!can(i, 'full')) return i.reply({ content: '⛔ Настраивать доступ может только руководство с «Полным доступом».', ...EPH });
-  const [, action, perm, kind, id] = i.customId.split(':');
-  if (action === 'home' || !Object.hasOwn(PERMS, perm)) return i.update(homeView());
-  if (action === 'open') return i.update(permView(perm));
-
-  const ins = db.prepare('INSERT OR IGNORE INTO access(target_id,kind,perm) VALUES(?,?,?)');
-  let note = '';
-  if (action === 'addr' || action === 'addu') {
-    const k = action === 'addr' ? 'role' : 'user';
-    if (k === 'role') setRolesFor(perm, [...roleIdsWith(perm), ...i.values]);
-    else for (const v of i.values) ins.run(v, k, perm);
-    note = `✅ Добавлено: ${i.values.map((v) => (k === 'role' ? `<@&${v}>` : `<@${v}>`)).join(' ')}`;
-  }
-  if (action === 'rm') {
-    if (kind === 'r') setRolesFor(perm, roleIdsWith(perm).filter((x) => x !== id));
-    else db.prepare(`DELETE FROM access WHERE target_id=? AND perm=? AND kind='user'`).run(id, perm);
-    note = `✖️ Убрано: ${kind === 'r' ? `<@&${id}>` : `<@${id}>`}`;
-    if (perm === 'full' && !can(i, 'full')) note += '\n⚠️ Вы убрали «Полный доступ» у себя — панель больше не будет вам доступна.';
-  }
-  onAccessChange?.();
-  return i.update(permView(perm, note));
-}
-
 /** Вызывается после любого изменения прав (index.js подключает пересинхронизацию прокуроров и судей) */
 let onAccessChange = null;
 export const setAccessChangeHook = (fn) => { onAccessChange = fn; };
 /** Сообщить о смене прав из других модулей (окно /settings) */
 export const notifyAccessChange = () => onAccessChange?.();
-
-export async function access(client, i) {
-  const sub = i.options.getSubcommand();
-
-  if (sub === 'panel') {
-    return i.reply({ ...homeView(), flags: V2 | MessageFlags.Ephemeral, files: [new AttachmentBuilder(LOGO_FILE, { name: 'logo.webp' })] });
-  }
-  if (sub === 'list') return i.reply({ embeds: [listEmbed()], ...EPH });
-
-  const perm = i.options.getString('permission');
-  const role = i.options.getRole('role');
-  const user = i.options.getUser('user');
-  if (!role && !user) return i.reply({ content: 'Укажите роль (role) или пользователя (user).', ...EPH });
-  const kind = role ? 'role' : 'user';
-  const target = role ? role.id : user.id;
-  const mention = role ? `<@&${target}>` : `<@${target}>`;
-  const [name] = PERMS[perm];
-
-  if (sub === 'grant') {
-    if (role) setRolesFor(perm, [...roleIdsWith(perm), target]);
-    else db.prepare('INSERT OR IGNORE INTO access(target_id,kind,perm) VALUES(?,?,?)').run(target, kind, perm);
-    onAccessChange?.();
-    return i.reply({ content: `✅ ${mention} → **${name}**.`, ...EPH });
-  }
-  const had = role ? roleIdsWith(perm).includes(target) : userIdsWith(perm).includes(target);
-  if (role) setRolesFor(perm, roleIdsWith(perm).filter((x) => x !== target));
-  else db.prepare(`DELETE FROM access WHERE target_id=? AND perm=? AND kind='user'`).run(target, perm);
-  const r = { changes: had ? 1 : 0 };
-  if (r.changes) onAccessChange?.();
-  return i.reply({ content: r.changes ? `🗑️ У ${mention} убрано: **${name}**.` : `У ${mention} не было права «${name}».`, ...EPH });
-}

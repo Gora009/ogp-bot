@@ -2,9 +2,9 @@ import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle,
 } from 'discord.js';
 import { db } from './db.js';
-import { isLeader, roleIdsWith } from './access.js';
+import { can, isLeader, roleIdsWith } from './access.js';
 import { destinations, editAll, pingIn, sendAll } from './mirror.js';
-import { C, EPH, isProsecutor, nowTs, sendDM, stamp } from './util.js';
+import { C, EPH, isProsecutor, nowTs, safeText, sendDM, stamp } from './util.js';
 
 const getRes = (id) => db.prepare('SELECT * FROM resignations WHERE id=?').get(id);
 
@@ -16,7 +16,7 @@ const reasonModal = (customId, title, label, placeholder) =>
 
 const requestEmbed = (r) =>
   new EmbedBuilder().setColor(C.brand).setTitle('📄 Заявление на увольнение')
-    .setDescription(`**Сотрудник:** <@${r.user_id}>\n**Причина:** ${r.reason}`)
+    .setDescription(`**Сотрудник:** <@${r.user_id}>\n**Причина:** ${safeText(r.reason)}`)
     .setFooter({ text: stamp(r.created_ts) });
 
 /** Как в оригинале: одобрено — причина увольнения; отклонено — только причина отказа */
@@ -25,8 +25,8 @@ const decidedEmbed = (r) => {
   return new EmbedBuilder().setColor(ok ? C.success : C.danger)
     .setTitle(ok ? '✅ Заявление одобрено' : '❌ Заявление отклонено')
     .setDescription(ok
-      ? `**Сотрудник:** <@${r.user_id}>\n**Причина:** ${r.reason}\n\n**Одобрил:** <@${r.decided_by}>`
-      : `**Сотрудник:** <@${r.user_id}>\n\n**Отклонил:** <@${r.decided_by}>\n**Причина:** ${r.reject_reason}`)
+      ? `**Сотрудник:** <@${r.user_id}>\n**Причина:** ${safeText(r.reason)}\n\n**Одобрил:** <@${r.decided_by}>`
+      : `**Сотрудник:** <@${r.user_id}>\n\n**Отклонил:** <@${r.decided_by}>\n**Причина:** ${safeText(r.reject_reason)}`)
     .setFooter({ text: stamp(r.decided_ts) });
 };
 
@@ -62,6 +62,7 @@ export async function handleResign(client, i) {
   if (!isLeader(i)) return i.reply({ content: '⛔ Решение принимает руководство.', ...EPH });
   const r = getRes(Number(id));
   if (!r || r.status !== 'pending') return i.update({ components: [] });
+  if (r.user_id === i.user.id && !can(i, 'full')) return i.reply({ content: '⛔ Своё заявление нельзя рассмотреть самому.', ...EPH });
 
   if (action === 'ok') {
     db.prepare(`UPDATE resignations SET status='approved', decided_by=?, decided_ts=? WHERE id=?`).run(i.user.id, nowTs(), r.id);

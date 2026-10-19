@@ -696,6 +696,8 @@ function toCache(key, result) {
   db.prepare('INSERT OR REPLACE INTO ai_cache(key,result,created_ts) VALUES(?,?,?)').run(key, result, nowTs());
   db.prepare('DELETE FROM ai_cache WHERE created_ts<?').run(nowTs() - KEEP_DAYS * 86400);
 }
+/** Ссылки в ответе ИИ — только те, что есть в самом документе: подставную ссылку из «текста для ИИ» убираем, остаётся подпись */
+const knownLinks = (out, src) => String(out).replace(LINK, (m, label, url) => (src.includes(url) ? m : label));
 const inFlight = new Map(); // двое запросили один документ одновременно — платим один раз
 
 /**
@@ -705,7 +707,7 @@ const inFlight = new Map(); // двое запросили один докуме
 export async function analyzeText(text, type, userId = null, { paid = true } = {}) {
   const key = cacheKey(text, type);
   const hit = fromCache(key);
-  if (hit) return { text: hit, ai: true, cached: true };
+  if (hit) return { text: knownLinks(hit, text), ai: true, cached: true };
   if (inFlight.has(key)) return { ...await inFlight.get(key), cached: true };
   // нет права на ИИ: сохранённый разбор показываем (он уже оплачен), новый не заказываем
   if (!paid) return { text: heuristic(text, type), ai: false, noAccess: true };
@@ -719,7 +721,7 @@ export async function analyzeText(text, type, userId = null, { paid = true } = {
         : type === 'case' ? mergeChecks(verifyChecks(ensureAccused(raw, text), text), caseChecks(text))
           // правка действующих норм (есть «Было/Стало») — это «Изменения», а не «Основные положения»
           : type === 'bill' && /^Было\s*:/m.test(raw) ? raw.replace(/^Основные положения\s*:/m, 'Изменения:') : raw;
-      if (result) { toCache(key, result); return { text: result, ai: true }; }
+      if (result) { toCache(key, knownLinks(result, text)); return { text: knownLinks(result, text), ai: true }; }
     } catch (e) {
       console.error('analyze (AI):', e?.status ?? '', e?.message);
     }
@@ -820,7 +822,7 @@ function allow(userId) {
 /** Ответ виден только автору (и на сервере, и в ЛС), убрать — «Нажмите здесь, чтобы убрать его» от Discord */
 export async function analyze(client, i) {
   if (!await mayUseAI(client, i)) {
-    return i.reply({ content: '❌ Нет доступа к разбору документов. Его выдаёт руководство: `/settings` → Доступ → «Разбор документов (ИИ)».', plain: true, ...EPH });
+    return i.reply({ content: '❌ Нет доступа к разбору документов.', plain: true, ...EPH });
   }
   const url = i.options.getString('url');
   const type = Object.hasOwn(TYPES, i.options.getString('type')) ? i.options.getString('type') : 'other';

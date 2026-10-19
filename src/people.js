@@ -6,10 +6,10 @@ import { rankOfMember } from './hierarchy.js';
 import { fetchMembers, rememberName } from './util.js';
 
 /**
- * Базы прокуроров и судей бот ведёт сам — /register_prosecutors и /sync_judges больше не нужны:
+ * Базы прокуроров и судей бот ведёт сам:
  *  • при запуске и раз в 30 минут — полная сверка по ролям всех участников;
  *  • сразу при выдаче/снятии роли, входе и выходе участника;
- *  • сразу после изменения прав в /access или /autosetup.
+ *  • сразу после изменения прав в /settings.
  * Нужен Server Members Intent; без него прокуроры попадают в базу, когда сами пользуются ботом.
  */
 export const hasMembersIntent = (client) => client.options.intents.has(GatewayIntentBits.GuildMembers);

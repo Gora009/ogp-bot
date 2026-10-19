@@ -5,7 +5,7 @@ import {
 import { db, getSetting, setSetting } from './db.js';
 import { destinations, editAll, mirrorsOf, pingIn, sendAll } from './mirror.js';
 import { can, roleIdsWith } from './access.js';
-import { C, COLOR, EPH, isOnVacation, msk, mskDate, nowTs, sendDM, stamp } from './util.js';
+import { C, COLOR, EPH, isOnVacation, msk, mskDate, nowTs, safeText, sendDM, stamp } from './util.js';
 
 // старые кураторства «ожидает начала» (до отказа от кнопки «Приступить») — считаем начатыми с момента назначения
 db.prepare(`UPDATE mentorships SET status='active', started_ts=COALESCE(started_ts, created_ts) WHERE status='pending'`).run();
@@ -19,7 +19,7 @@ const STATUS_COLOR = { pending: C.warn, active: C.details, done: C.success, fail
 const get = (id) => db.prepare('SELECT * FROM mentorships WHERE id=?').get(id);
 /** Каналы карточек кураторства на всех серверах (по умолчанию — канал панели «Кураторство») */
 const cardChannels = () => destinations('mentoring_cards', 'mentoring');
-const deny = (i, what = 'Эта функция доступна ролям с доступом «Кураторство».') => i.reply({ content: `⛔ ${what}`, ...EPH });
+const deny = (i, what = 'Нет прав: кураторами управляет руководство.') => i.reply({ content: `⛔ ${what}`, ...EPH });
 const isMentor = (i, m) => i.user.id === m.mentor_id;
 const canManage = (i) => can(i, 'mentoring');
 const canAct = (i, m) => isMentor(i, m) || canManage(i);
@@ -77,16 +77,16 @@ function cardEmbed(m, title) {
   const e = new EmbedBuilder().setColor(STATUS_COLOR[m.status]).setTitle(title ?? `🎓 Кураторство ${m.mentee_name}`)
     .setDescription(
       `**Куратор:** <@${m.mentor_id}>\n**Курируемый:** <@${m.mentee_id}>` +
-      (m.goal ? `\n**Цель:** ${m.goal}` : ''))
+      (m.goal ? `\n**Цель:** ${safeText(m.goal)}` : ''))
     // три колонки в ряд растягивают карточку на всю ширину, как «Инфо»
     .addFields(
       { name: '⏰ Начало', value: msk(m.started_ts ?? m.created_ts), inline: true },
       { name: '⏰ Конец', value: msk(m.end_by), inline: true },
       { name: 'Статус', value: STATUS[m.status], inline: true })
     .setFooter({ text: stamp(m.finished_ts ?? m.started_ts ?? m.created_ts) });
-  if (m.refuse_reason) e.addFields({ name: 'Причина отказа', value: m.refuse_reason });
-  if (m.cancel_reason) e.addFields({ name: 'Причина отмены', value: m.cancel_reason });
-  if (m.result_comment) e.addFields({ name: 'Отзыв куратора', value: m.result_comment });
+  if (m.refuse_reason) e.addFields({ name: 'Причина отказа', value: safeText(m.refuse_reason) });
+  if (m.cancel_reason) e.addFields({ name: 'Причина отмены', value: safeText(m.cancel_reason) });
+  if (m.result_comment) e.addFields({ name: 'Отзыв куратора', value: safeText(m.result_comment) });
   return e;
 }
 
@@ -184,10 +184,10 @@ function infoEmbed(m) {
     { name: 'Назначил', value: m.created_by ? `<@${m.created_by}>` : '—', inline: true },
     { name: 'Конец', value: msk(m.end_by), inline: true },
     { name: 'Завершено', value: m.finished_ts ? msk(m.finished_ts) : '—', inline: true });
-  if (m.goal) e.addFields({ name: 'Цель', value: m.goal });
-  if (m.refuse_reason) e.addFields({ name: 'Причина отказа', value: m.refuse_reason });
-  if (m.cancel_reason) e.addFields({ name: 'Причина отмены', value: m.cancel_reason });
-  if (m.result_comment) e.addFields({ name: 'Отзыв куратора', value: m.result_comment });
+  if (m.goal) e.addFields({ name: 'Цель', value: safeText(m.goal) });
+  if (m.refuse_reason) e.addFields({ name: 'Причина отказа', value: safeText(m.refuse_reason) });
+  if (m.cancel_reason) e.addFields({ name: 'Причина отмены', value: safeText(m.cancel_reason) });
+  if (m.result_comment) e.addFields({ name: 'Отзыв куратора', value: safeText(m.result_comment) });
   return e.setFooter({ text: `№${m.id} • ${stamp()}` });
 }
 
@@ -219,7 +219,7 @@ async function submitRefuse(client, i) {
     content: pingIn(ch, roles) || undefined,
     embeds: [new EmbedBuilder().setColor(C.danger).setTitle('🚫 Куратор отказался от кураторства').setDescription(
       `**Куратор:** <@${f.mentor_id}>\n**Курируемый:** <@${f.mentee_id}>\n` +
-      `**Причина:** ${reason}\n**Отказал:** <@${i.user.id}>`).setFooter({ text: stamp() })],
+      `**Причина:** ${safeText(reason)}\n**Отказал:** <@${i.user.id}>`).setFooter({ text: stamp() })],
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`mnt:readd:${f.mentee_id}`).setLabel('Назначить заново').setEmoji('➕').setStyle(ButtonStyle.Primary))],
   }));
@@ -287,7 +287,7 @@ function instruction(i) {
     : [];
   return i.reply({
     embeds: [new EmbedBuilder().setColor(C.info).setTitle('📖 Инструкция по кураторству')
-      .setDescription(text || 'Инструкция пока не заполнена. Её добавляет Генеральный прокурор.').setFooter({ text: stamp() })],
+      .setDescription(text || 'Инструкция пока не заполнена.').setFooter({ text: stamp() })],
     components: rowsOut, ...EPH,
   });
 }
@@ -431,7 +431,7 @@ function activeView(i, page = 0) {
 
   const e = new EmbedBuilder().setColor(C.success).setTitle('🟢 Активные кураторства')
     .setDescription(list.length
-      ? `🟢 **Идут сейчас:** ${nActive}\n⏳ **Ожидают начала:** ${list.length - nActive}\n​`
+      ? `🟢 **Идут сейчас:** ${nActive}\n​`
       : 'Сейчас нет действующих кураторств.')
     .setFooter({ text: pages > 1 ? `Стр. ${page + 1}/${pages} • ${stamp()}` : stamp() });
   // у каждого кураторства свой блок: заголовок со статусом и три колонки в ряд (так карточка тянется на всю ширину)

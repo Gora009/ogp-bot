@@ -4,9 +4,9 @@ import {
 } from 'discord.js';
 import { db } from './db.js';
 import {
-  C, COLOR, EPH, fetchMembers, isProsecutor, mskDate, nowTs, parseDate, sendDM, stamp,
+  C, COLOR, EPH, fetchMembers, isProsecutor, mskDate, nowTs, parseDate, safeText, sendDM, stamp,
 } from './util.js';
-import { isLeader, roleIdsWith } from './access.js';
+import { can, isLeader, roleIdsWith } from './access.js';
 import { destinations, editAll, mirrorsOf, pingIn, sendAll } from './mirror.js';
 import { conf } from './config.js';
 
@@ -29,7 +29,7 @@ export const vacationsPanelPayload = () => ({
 
 const requestEmbed = (v) =>
   new EmbedBuilder().setColor(COLOR).setTitle('🏖️ Заявка на отпуск')
-    .setDescription(`**Сотрудник:** <@${v.user_id}>\n**Период:** ${range(v)}\n**Причина:** ${v.reason || '—'}`)
+    .setDescription(`**Сотрудник:** <@${v.user_id}>\n**Период:** ${range(v)}\n**Причина:** ${safeText(v.reason || '—')}`)
     .setFooter({ text: stamp(v.created_ts) });
 
 const decidedEmbed = (v) => {
@@ -45,7 +45,7 @@ const decidedEmbed = (v) => {
     .setDescription(
       `**Сотрудник:** <@${v.user_id}>\n**Период:** ${range(v)}\n\n` +
       `**${ok ? 'Одобрил' : 'Отклонил'}:** <@${v.decided_by}>` +
-      (ok ? '' : `\n**Причина:** ${v.reject_reason}`))
+      (ok ? '' : `\n**Причина:** ${safeText(v.reject_reason)}`))
     .setFooter({ text: stamp(v.decided_ts) });
 };
 
@@ -106,7 +106,7 @@ function myView(userId, note = '') {
   const isOpen = (v) => ['pending', 'approved'].includes(v.status) && v.end_ts >= nowTs();
   const open = rows.filter(isOpen).slice(0, 10);
   const past = rows.filter((v) => !open.includes(v)).slice(0, 15);
-  const line = (v) => `${range(v)} — ${VAC_STATUS[v.status]}${v.reject_reason ? ` (${v.reject_reason})` : ''}`;
+  const line = (v) => `${range(v)} — ${VAC_STATUS[v.status]}${v.reject_reason ? ` (${safeText(v.reject_reason)})` : ''}`;
   const c = new ContainerBuilder().setAccentColor(COLOR).addTextDisplayComponents(text('## 📋 Мои отпуска'));
   if (!rows.length) c.addTextDisplayComponents(text('У вас пока нет заявок на отпуск.'));
   for (const v of open) {
@@ -184,6 +184,8 @@ export async function handleVac(client, i) {
   if (!isLeader(i)) return i.reply({ content: '⛔ Решение принимает руководство.', ...EPH });
   const v = getVac(Number(id));
   if (!v || v.status !== 'pending') return i.update({ components: [] });
+  // свою заявку одобряет или отклоняет другой руководитель (кроме ГП — над ним никого нет)
+  if (v.user_id === i.user.id && !can(i, 'full')) return i.reply({ content: '⛔ Свою заявку нельзя рассмотреть самому.', ...EPH });
 
   if (action === 'ok') {
     db.prepare(`UPDATE vacations SET status='approved', decided_by=?, decided_ts=?, channel_id=?, message_id=? WHERE id=?`)
@@ -236,7 +238,7 @@ export async function cancelVacation(client, i) {
 /* ---------- роль «Отпуск»: выдаётся в день начала, снимается по окончании ---------- */
 let membersLoaded = false;
 export async function syncVacationRole(client) {
-  const roleId = conf.vacationRoleId(); // /settings, /autosetup или .env
+  const roleId = conf.vacationRoleId(); // /settings или .env
   // без Server Members Intent список участников не получить (запрос завис бы на ~2 минуты)
   if (!roleId || !client.options.intents.has(GatewayIntentBits.GuildMembers)) return;
   const guild = client.guilds.cache.find((g) => g.roles.cache.has(roleId)); // сервер, где живёт роль «Отпуск»

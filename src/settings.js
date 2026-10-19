@@ -15,7 +15,7 @@ import { autosetup } from './autosetup.js';
 import { faq } from './faq.js';
 import { poll } from './complaints.js';
 import { syncPeople } from './people.js';
-import { LOG_DIR, logFile } from './log.js';
+import { logFile } from './log.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -80,7 +80,7 @@ const note = (text) => (text ? ['', `> ${text}`] : []);
 function mainView(client, msg) {
   const pros = db.prepare('SELECT COUNT(*) n, SUM(senior) s FROM prosecutors').get();
   const vr = conf.vacationRoleId();
-  return page(section('Общее', 'Сводка всех настроек. Разделы — кнопками ниже.', [
+  return page(section('Общее', 'Сводка настроек', [
       '**Жалобы**',
       `Назначение: ${autoAssignText()}`,
       `Срок закрытия: ${conf.deadlineHours()} ч от подачи на форуме`,
@@ -96,8 +96,6 @@ function mainView(client, msg) {
       '**Система**',
       `Команды: ${getSetting('commands_scope') === 'global' ? 'глобальные' : 'на этом сервере'}`,
       `Список участников сервера (Server Members Intent): ${hasIntent(client) ? 'доступен' : 'недоступен'}`,
-      '',
-      '-# «Автонастройка по ролям» сама выдаст права ролям по их названиям (ГП, ЗГП, СГП, Прокурор, Судья, Отпуск) — сначала покажет план.',
       ...note(msg),
     ]), [...nav('main'), row(btn('set:auto', 'Автонастройка по ролям', ButtonStyle.Primary), btn('set:faq', 'Справка'))]);
 }
@@ -120,8 +118,7 @@ function accessView(perm = 'prosecutor', msg = '') {
       `**Сейчас настраивается: ${PERMS[perm][0]}**`,
       PERMS[perm][1],
       '',
-      'Выберите право в первом списке. Во втором и третьем отметьте роли и людей: отмеченные получат право, ' +
-        'снятая отметка его заберёт.',
+      '-# Отмеченные роли и люди получают право, снятая отметка его забирает.',
       ...note(msg),
     ]), [
       ...nav('access'),
@@ -139,21 +136,17 @@ function complaintsView(msg = '') {
   const sel = new UserSelectMenuBuilder().setCustomId('set:resp').setPlaceholder('Ответственные за дедлайны')
     .setMinValues(0).setMaxValues(25);
   if (resp.length) sel.setDefaultUsers(resp.slice(0, 25));
-  return page(section('Жалобы', 'Назначение, сроки и жалобы на руководство', [
+  return page(section('Жалобы', 'Назначение и сроки', [
       '**Назначение**',
       autoAssignText(),
       '',
       '**Сроки**',
       `Закрыть жалобу: ${conf.deadlineHours()} ч от подачи на форуме`,
-      `Принять жалобу (дедлайн ответа): ${rem[0] ?? 24} ч от подачи — иначе исполнителю «Просрочен дедлайн ответа!»`,
-      `После просрочки: ${rep > 0 ? `повтор исполнителю каждые ${rep} ч` : 'без повторов'}`,
-      '',
-      '**Иерархия**',
-      `Должностей: ${ranks().length}. Кто рассматривает жалобы на кого — в разделе «Иерархия» (кнопка ниже).`,
-      '-# Выключить распределение жалоб человеку: `/distribution off`.',
+      `Дедлайн ответа: ${rem[0] ?? 24} ч от подачи`,
+      `Повтор после просрочки: ${rep > 0 ? `каждые ${rep} ч` : 'нет'}`,
       '',
       '**Ответственные за дедлайны**',
-      `${resp.map((u) => `<@${u}>`).join(' ') || 'не назначены'} — упоминаются в канале просрочек и могут продлевать сроки`,
+      resp.map((u) => `<@${u}>`).join(' ') || 'не назначены',
       ...note(msg),
     ]), [
       ...nav('complaints'),
@@ -171,15 +164,14 @@ function staffView(msg = '') {
   if (vr) roleSel.setDefaultRoles(vr);
   return page(section('Сотрудники', 'Отпуска, кураторство и базы сотрудников', [
       '**Роль «Отпуск»**',
-      `${vr ? `<@&${vr}>` : 'не задана'} — выдаётся в день начала отпуска и снимается после него. ` +
-        'Роль бота должна стоять выше неё.',
+      vr ? `<@&${vr}>` : 'не задана',
+      '-# Роль бота должна стоять выше неё.',
       '',
       '**Инструкция кураторства**',
       instr ? `${instr.slice(0, 300)}${instr.length > 300 ? '…' : ''}` : 'не заполнена',
       '',
       '**Базы**',
       `Прокуроров: ${pros.n} (старший состав: ${pros.s ?? 0}), судей: ${judges}`,
-      'Бот ведёт их сам по ролям — права ролям выдаются в разделе «Доступ».',
       ...note(msg),
     ]), [
       ...nav('staff'),
@@ -196,26 +188,23 @@ function systemView(client, msg = '') {
   return page(section('Система', 'Команды, серверы бота и форум', [
       '**Серверы бота**',
       ...storedGuilds().map((id) => `• ${client.guilds.cache.get(id)?.name ?? 'бот ещё не добавлен'} (${id})`),
-      'На любом другом сервере бот сразу выходит. Чтобы добавить второй сервер, сначала разрешите его здесь.',
-      'Панели на каждом сервере свои (`/setup` там), а карточки жалоб, дел и заявок одинаковые и обновляются везде сразу.',
+      '-# С других серверов бот выходит сам.',
       '',
       '**Команды бота**',
-      global ? 'Глобальные — видны на всех серверах бота (обновляются до часа)' : 'На этом сервере — обновляются сразу',
+      global ? 'Глобальные' : 'Серверные',
       '',
       '**Сервер Прокуратуры**',
       pg ? `${pgName ?? 'бот не состоит на этом сервере'} (${pg})` : 'не задан',
-      'Нужен для /check_members и /invite_missing.',
       '',
       '**Форум**',
       `Раздел жалоб: ${FORUM_URL}`,
       `Проверка новых жалоб: каждые ${POLL} с`,
       '',
       '**Список участников сервера**',
-      hasIntent(client) ? 'Доступен — базы сотрудников и роль «Отпуск» обновляются автоматически'
-        : 'Недоступен — включите Server Members Intent в Developer Portal → Bot',
+      hasIntent(client) ? 'Доступен' : 'Недоступен — включите Server Members Intent в Developer Portal',
       '',
       '**Google Формы**',
-      ...(forms.length ? forms.map(formLine) : ['не подключены — подключаются через `/setup`']),
+      ...(forms.length ? forms.map(formLine) : ['не подключены']),
       ...note(msg),
     ]), [
       ...nav('system'),
@@ -236,16 +225,15 @@ function hierarchyView(selected = null, msg = '') {
   const body = [
     '**Должности (выше — старше)**',
     ...all.map((r, k) => `${k + 1}. **${r.name}** → ${targetsOf(r.id).map(nameOf).join(', ') || '—'}`),
-    '-# Справа — на кого должность рассматривает жалобы. Жалобу на должность получают только те, кто её рассматривает; ' +
-      'жалобы не на сотрудников ОГП — любой прокурор.',
+    '-# Справа — на кого должность рассматривает жалобы.',
   ];
   if (sel) {
     body.push(`**Должность: ${sel.name}**`,
       `Слова: ${sel.keywords.join(', ') || '—'}`,
       `Рассматривает жалобы на: ${targetsOf(sel.id).map(nameOf).join(', ') || '—'}`,
-      '-# По словам бот узнаёт должность в названиях ролей (у сотрудников) и в «Сведениях о нарушителе» (в жалобах), в любом падеже.');
+      '-# По словам бот узнаёт должность в ролях и в жалобах.');
   } else {
-    body.push('**Как настроить**', 'Выберите должность в списке ниже — появятся её настройки.');
+    body.push('-# Выберите должность, чтобы изменить её.');
   }
   body.push(...note(msg));
   const pick = new StringSelectMenuBuilder().setCustomId('set:h:pick').setPlaceholder('Выберите должность')
@@ -302,7 +290,7 @@ async function handleHierarchy(client, i, sub, id) {
     const kw = words(i.fields.getTextInputValue('kw'));
     const res = addRank(name, kw.length ? kw : [name.toLowerCase()]);
     if (res.error) return i.reply({ content: `⚠️ ${res.error}`, ...EPH });
-    return done(rankByName(name)?.id, `Должность «${name}» добавлена в конец списка. Отметьте, кого она рассматривает, и при необходимости поднимите выше.`);
+    return done(rankByName(name)?.id, `Должность «${name}» добавлена.`);
   }
   return i.update(hierarchyView(r?.id ?? null, 'Должность не найдена — список обновлён.'));
 }
@@ -325,7 +313,7 @@ const MODALS = {
   times: () => new ModalBuilder().setCustomId('set:s:times').setTitle('Сроки и назначение').addComponents(
     input('auto', 'Назначение, сек (0 — сразу, -1 — вручную)', conf.autoAssignSec(), TextInputStyle.Short, 6),
     input('deadline', 'Срок закрытия жалобы, часов', conf.deadlineHours(), TextInputStyle.Short, 4),
-    input('rem', 'Напоминания через N часов после подачи', conf.reminderHours().join(', '), TextInputStyle.Short, 40, false),
+    input('rem', 'Дедлайн ответа, часов от подачи', conf.reminderHours()[0] ?? 24, TextInputStyle.Short, 3),
     input('rep', 'Повтор после просрочки, часов (0 — нет)', conf.repeatHours(), TextInputStyle.Short, 3)),
   instr: () => new ModalBuilder().setCustomId('set:s:instr').setTitle('Инструкция кураторства').addComponents(
     input('text', 'Текст инструкции', getSetting('mentor_instruction') ?? '', TextInputStyle.Paragraph, 4000, false)),
@@ -342,18 +330,16 @@ function submitModal(i, kind) {
     const auto = Number(v('auto'));
     const deadline = Number(v('deadline'));
     const rep = Number(v('rep'));
-    const rem = v('rem') ? v('rem').split(/[,\s]+/).filter(Boolean).map(Number) : [];
+    const rem = Number(v('rem'));
     if (!Number.isInteger(auto) || auto < -1 || auto > 86400) return ['complaints', 'Назначение: целое число секунд, 0 или -1.'];
     if (!Number.isInteger(deadline) || deadline < 1 || deadline > 720) return ['complaints', 'Срок закрытия: от 1 до 720 часов.'];
     if (!Number.isInteger(rep) || rep < 0 || rep > 168) return ['complaints', 'Повтор: от 0 до 168 часов.'];
-    if (rem.some((h) => !Number.isInteger(h) || h < 1 || h >= deadline)) {
-      return ['complaints', `Напоминания: целые часы меньше срока закрытия (${deadline} ч), через запятую.`];
-    }
+    if (!Number.isInteger(rem) || rem < 1 || rem >= deadline) return ['complaints', `Дедлайн ответа: от 1 до ${deadline - 1} часов.`];
     setConf('auto_assign_seconds', auto);
     setConf('deadline_hours', deadline);
-    setConf('reminder_hours', [...new Set(rem)].sort((a, b) => a - b).join(','));
+    setConf('reminder_hours', rem);
     setConf('overdue_repeat_hours', rep);
-    return ['complaints', 'Сохранено. Новый срок действует для жалоб, назначенных с этого момента.'];
+    return ['complaints', 'Сохранено.'];
   }
   if (kind === 'instr') {
     setSetting('mentor_instruction', v('text'));
@@ -361,13 +347,13 @@ function submitModal(i, kind) {
   }
   if (kind === 'guild') {
     const id = v('id');
-    if (!/^\d{15,22}$/.test(id)) return ['system', 'ID сервера — это число из 17–20 цифр (ПКМ по серверу → «Копировать ID»).'];
+    if (!/^\d{15,22}$/.test(id)) return ['system', 'ID сервера — число из 17–20 цифр.'];
     allowGuild(id);
-    return ['system', `Сервер ${id} разрешён — теперь бота можно на него добавить.`];
+    return ['system', `Сервер ${id} разрешён.`];
   }
   if (kind === 'pg') {
     const id = v('id');
-    if (id && !/^\d{15,22}$/.test(id)) return ['system', 'ID сервера — это число из 17–20 цифр (ПКМ по серверу → «Копировать ID»).'];
+    if (id && !/^\d{15,22}$/.test(id)) return ['system', 'ID сервера — число из 17–20 цифр.'];
     setConf('prosecution_guild_id', id || null);
     return ['system', id ? 'Сервер Прокуратуры сохранён.' : 'Сервер Прокуратуры убран.'];
   }
@@ -383,6 +369,10 @@ export async function handleSettings(client, i) {
   if (action === 'h') return handleHierarchy(client, i, arg, extra);
 
   if (action === 'p') return i.update(view(client, arg));
+  // серверы бота, область команд, сервер Прокуратуры, журнал — только «Полный доступ»
+  if (['gdel', 'scope', 'logs'].includes(action) || (['m', 's'].includes(action) && ['guild', 'pg'].includes(arg))) {
+    if (!can(i, 'full')) return i.reply({ content: '❌ Только ГП может это менять.', ...EPH });
+  }
 
   // доступ — только «Полный доступ»
   if (['perm', 'ar', 'au'].includes(action)) {
@@ -418,7 +408,6 @@ export async function handleSettings(client, i) {
   if (action === 'gdel') {
     const id = i.values[0];
     if (id === i.guildId) return i.reply({ content: '⛔ Нельзя запретить сервер, на котором вы сейчас находитесь.', ...EPH });
-    if (!can(i, 'full')) return i.reply({ content: '❌ Только ГП может запрещать серверы.', plain: true, ...EPH });
     disallowGuild(id);
     const g = client.guilds.cache.get(id);
     if (g) await leaveIfForeign(g);
@@ -447,7 +436,6 @@ export async function handleSettings(client, i) {
   }
   // журнал бота за сегодня — файлом, только «Полный доступ» (в нём действия всех сотрудников)
   if (action === 'logs') {
-    if (!can(i, 'full')) return i.reply({ content: '⛔ Журнал доступен только руководству с «Полным доступом».', ...EPH });
     const file = logFile();
     if (!fs.existsSync(file)) return i.reply({ content: 'За сегодня в журнале пока пусто.', ...EPH });
     // Discord принимает файлы до 8 МБ — если журнал больше, присылаем его конец
@@ -455,7 +443,7 @@ export async function handleSettings(client, i) {
     const size = fs.statSync(file).size;
     const data = size > MAX ? fs.readFileSync(file).subarray(size - MAX) : fs.readFileSync(file);
     return i.reply({
-      content: `Журнал за сегодня${size > MAX ? ' (последние 8 МБ)' : ''}. Прошлые дни — на сервере: \`/opt/ogp-bot/${LOG_DIR}\`.`,
+      content: `Журнал за сегодня${size > MAX ? ' (последние 8 МБ)' : ''}.`,
       files: [new AttachmentBuilder(data, { name: path.basename(file) })], ...EPH,
     });
   }

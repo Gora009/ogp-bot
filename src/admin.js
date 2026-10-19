@@ -8,7 +8,6 @@ import { mentoringPanelPayload, refreshOpenMentorships } from './mentoring.js';
 import { vacationsPanelPayload } from './vacations.js';
 import { SETUP_PANELS, commands } from './commands.js';
 import { analyzeCommand } from './analyze.js';
-import { syncPeople } from './people.js';
 import { conf } from './config.js';
 import { alertPing } from './alerts.js';
 import { setupReply as formSetupReply } from './forms.js';
@@ -210,28 +209,6 @@ const NEED_INTENT = '⚠️ Эта команда читает список вс
   'Прокуроры всё равно попадают в базу сами, когда пользуются ботом (любая команда или кнопка).';
 const noMembersIntent = (client) => !client.options.intents.has(GatewayIntentBits.GuildMembers);
 
-/** /register_prosecutors и /sync_judges: сверить прямо сейчас (бот и так делает это сам при каждом изменении ролей) */
-async function syncNow(client, i) {
-  if (noMembersIntent(client)) return i.reply({ content: NEED_INTENT, ...EPH });
-  await i.deferReply(EPH);
-  const r = await syncPeople(client);
-  if (!r) return i.editReply('⚠️ Не удалось прочитать участников сервера. Попробуйте позже.');
-  const warn = [
-    ...(hasRulesFor('prosecutor') ? [] : [NO_RULE('Прокурор')]),
-    ...(hasRulesFor('judge') ? [] : [NO_RULE('Судья')]),
-  ];
-  return i.editReply({ embeds: [new EmbedBuilder().setColor(C.success).setTitle('👥 Базы сверены по ролям')
-    .addFields(
-      { name: 'Прокуроры', value: `**${r.prosecutors}**`, inline: true },
-      { name: 'Старший состав', value: `**${r.seniors}**`, inline: true },
-      { name: 'Судьи', value: `**${r.judges}**`, inline: true })
-    .setDescription(['Делать это вручную не нужно: бот обновляет базы сам, когда роли выдают или снимают.',
-      ...(r.removed ? [`Убрано из базы (нет роли): **${r.removed}**`] : []), ...warn].join('\n\n'))
-    .setFooter({ text: stamp() })] });
-}
-export const registerProsecutors = syncNow;
-export const syncJudges = syncNow;
-
 async function missingMembers(client, i) {
   const gid = conf.prosecutionGuildId();
   if (!gid) return { error: 'Не задан сервер Прокуратуры: `/settings` → Система.' };
@@ -402,19 +379,9 @@ export async function clearAllDm(client, i) {
 }
 
 /* ---------- ответственные за дедлайны ---------- */
-export async function deadlineResponsible(client, i) {
-  const action = i.options.getString('action');
-  const u = i.options.getUser('user');
-  if (action !== 'list' && !u) return i.reply({ content: 'Укажите пользователя (user).', ...EPH });
-  if (action === 'add') db.prepare('INSERT OR IGNORE INTO deadline_responsible(user_id) VALUES(?)').run(u.id);
-  if (action === 'remove') db.prepare('DELETE FROM deadline_responsible WHERE user_id=?').run(u.id);
-  const rows = db.prepare('SELECT user_id FROM deadline_responsible').all();
-  return reply(i, 'Ответственные за дедлайны', rows.map((r) => `• <@${r.user_id}>`).join('\n') || 'Список пуст.');
-}
-
 export async function checkResponsible(client, i) {
   await i.deferReply(EPH);
-  // ответственные — список из /settings → Жалобы и /deadline_responsible; их и тегает канал просрочек
+  // ответственные — список из /settings → Жалобы; их и тегает канал просрочек
   const ids = new Set(db.prepare('SELECT user_id FROM deadline_responsible').all().map((r) => r.user_id));
   const members = await fetchMembers(i.guild).catch(() => null);
   const lines = [];
