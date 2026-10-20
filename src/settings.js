@@ -71,7 +71,11 @@ const nav = (page) => PAGES.map((line) => new ActionRowBuilder().addComponents(l
 const row = (...c) => new ActionRowBuilder().addComponents(...c);
 const btn = (id, label, style = ButtonStyle.Secondary) => new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style);
 
-const mentions = (roles, users) => [...roles.map((r) => `<@&${r}>`), ...users.map((u) => `<@${u}>`)].join(' ') || 'не выдано';
+const PERM_EMOJI = {
+  full: '👑', setup: '🔧', staff: '👥', monitor: '⏰', approve: '✅', assign: '📝', judge: '⚖️',
+  prosecutor: '👤', senior: '⭐', case_register: '📂', mentoring: '🎓', ai: '🤖', mentoring_text: '📖',
+};
+const mentions = (roles, users) => [...roles.map((r) => `<@&${r}>`), ...users.map((u) => `<@${u}>`)].join(' ') || '-# не выдано';
 const responsible = () => db.prepare('SELECT user_id FROM deadline_responsible').all().map((r) => r.user_id);
 const hasIntent = (client) => client.options.intents.has(GatewayIntentBits.GuildMembers);
 const note = (text) => (text ? ['', `> ${text}`] : []);
@@ -101,8 +105,12 @@ function mainView(client, msg) {
 }
 
 function accessView(perm = 'prosecutor', msg = '') {
-  const lines = Object.entries(PERMS).map(([k, [name]]) =>
-    `${k === perm ? '**›** ' : ''}**${name}** — ${mentions(roleIdsWith(k), userIdsWith(k))}`);
+  // каждое право — своим абзацем: название, ниже роли и люди, между правами пустая строка
+  const lines = Object.entries(PERMS).flatMap(([k, [name]], n) => [
+    ...(n ? [''] : []),
+    `${PERM_EMOJI[k] ?? '•'} ${k === perm ? '› ' : ''}**${name}**`,
+    mentions(roleIdsWith(k), userIdsWith(k)),
+  ]);
   const roles = roleIdsWith(perm);
   const users = userIdsWith(perm);
   const roleSel = new RoleSelectMenuBuilder().setCustomId(`set:ar:${perm}`).setPlaceholder('Роли с этим правом')
