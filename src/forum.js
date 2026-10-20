@@ -48,13 +48,15 @@ export async function fetchViolator(url) {
  */
 export async function fetchComplaintDetails(url) {
   const $ = cheerio.load(await fetchHtml(url));
-  const text = $('.message-body .bbWrapper').first().text();
+  // с переносами строк (как в «Кратком содержании»), без markdown-звёздочек, которые заявители копируют в шаблон
+  const text = postText($, $('.message-body .bbWrapper').first())
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\*+/g, '');
   const v = /Сведения о нарушителе[^:\n]*:\s*([\s\S]*?)(?=\n\s*3\s*[.)]|\s3\s*[.)]\s*Подроб|$)/i.exec(text);
   // шаблоны разные: «1. Сведения о заявителе (…):», «1. Ваше Имя и Фамилия:», «1. ФИО:»
   const a = /Сведения о заявителе[^:\n]*:\s*([^\n]*)/i.exec(text)
     ?? /(?:^|\n)\s*1\s*[.)][^:\n]*(?:заявител|имя|фамили|фио)[^:\n]*:\s*([^\n]*)/i.exec(text);
   return {
-    violator: v ? v[1].replace(/\s+/g, ' ').trim().slice(0, 400) || null : null,
+    violator: v ? v[1].replace(/[[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 400) || null : null,
     applicant: a ? applicantName(a[1]) : null,
   };
 }
@@ -100,7 +102,7 @@ function postText($, body) {
 
 /** «Robby Blanc | 269587» → «Robby Blanc»: отрезаем паспорт и разделители */
 export function applicantName(s) {
-  const name = String(s).split(/[|,;/#]|\s[-–—]\s|\s№|\d{3,}/)[0].replace(/[\s.:-]+$/, '').replace(/\s+/g, ' ').trim();
+  const name = String(s).replace(/[*[\]]/g, '').split(/[|,;/#(]|\s[-–—]\s|\s№|\d{3,}/)[0].replace(/[\s.:-]+$/, '').replace(/\s+/g, ' ').trim();
   return name.length >= 2 ? name.slice(0, 60) : null;
 }
 
