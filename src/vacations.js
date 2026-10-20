@@ -4,7 +4,7 @@ import {
 } from 'discord.js';
 import { db } from './db.js';
 import {
-  C, COLOR, EPH, fetchMembers, isProsecutor, mskDate, nowTs, parseDate, safeText, sendDM, stamp,
+  C, COLOR, EPH, fetchMembers, fitLines, isProsecutor, mskDate, nowTs, parseDate, safeText, sendDM, stamp,
 } from './util.js';
 import { can, isLeader, roleIdsWith } from './access.js';
 import { destinations, editAll, mirrorsOf, pingIn, sendAll } from './mirror.js';
@@ -216,9 +216,9 @@ export async function handleVac(client, i) {
 /* ---------- /vacations, /cancel_vacation ---------- */
 export async function vacations(client, i) {
   const n = nowTs();
-  const rows = db.prepare(`SELECT * FROM vacations WHERE status='approved' AND end_ts>=? ORDER BY start_ts LIMIT 25`).all(n);
+  const rows = db.prepare(`SELECT * FROM vacations WHERE status='approved' AND end_ts>=? ORDER BY start_ts`).all(n);
   // ID — номер заявки на отпуск (тот же номер — в «Истории отпусков» кабинета)
-  const text = rows.map((r) => `${r.start_ts <= n ? '🏖️' : '✅'} **ID: ${r.id}** — <@${r.user_id}>\n└ ${range(r)}`).join('\n');
+  const text = fitLines(rows.map((r) => `${r.start_ts <= n ? '🏖️' : '✅'} **ID: ${r.id}** — <@${r.user_id}>\n└ ${range(r)}`));
   return i.reply({
     embeds: [new EmbedBuilder().setColor(COLOR).setTitle('🏖️ Отпуска')
       .setDescription(text || 'Активных отпусков нет.').setFooter({ text: stamp() })],

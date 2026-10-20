@@ -159,24 +159,6 @@ export function syncProsecutorRecord(member) {
   }
 }
 
-/**
- * Помечает в базе прокуроров, кто из них старший состав (по ролям на сервере).
- * Роли читаются через REST (интент участников не нужен); обновление не чаще раза в 10 минут.
- */
-let lastSeniorRefresh = 0;
-export async function refreshSeniorFlags(guild, force = false) {
-  if (!guild || (!force && Date.now() - lastSeniorRefresh < 600_000)) return;
-  lastSeniorRefresh = Date.now();
-  const rows = db.prepare('SELECT user_id FROM prosecutors').all();
-  const upd = db.prepare('UPDATE prosecutors SET senior=? WHERE user_id=?');
-  for (let k = 0; k < rows.length; k += 5) {
-    await Promise.all(rows.slice(k, k + 5).map(async (r) => {
-      const m = await guild.members.fetch(r.user_id).catch(() => null);
-      if (m) upd.run(isSeniorMember(m) ? 1 : 0, r.user_id);
-    }));
-  }
-}
-
 export const isLeader = (i) => can(i, 'approve');
 export const isJudge = (i) => can(i, 'judge') || !!db.prepare('SELECT 1 FROM judges WHERE user_id=?').get(i.user.id);
 /** Упоминания ролей, которые должны видеть новые заявки */

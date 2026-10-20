@@ -12,7 +12,7 @@ import { conf } from './config.js';
 import { alertPing } from './alerts.js';
 import { setupReply as formSetupReply } from './forms.js';
 import { PERMS, hasRulesFor, isSeniorMember, memberHas } from './access.js';
-import { C, COLOR, EPH, cfg, fetchMembers, listProsecutors, msk, nowTs, sendDM, stamp } from './util.js';
+import { C, COLOR, EPH, cfg, fetchMembers, fitLines, safeText, listProsecutors, msk, nowTs, sendDM, stamp } from './util.js';
 
 export const FORUM_URL = process.env.FORUM_URL || 'https://forum.gta5rp.com/forums/zhaloby-v-prokuraturu.2142/';
 const embed = (title, desc) => new EmbedBuilder().setColor(COLOR).setTitle(title).setDescription(desc || '—').setFooter({ text: stamp() });
@@ -226,7 +226,7 @@ export async function checkMembers(client, i) {
   const r = await missingMembers(client, i);
   if (r.error) return i.editReply(r.error);
   return i.editReply({
-    embeds: [embed('Отсутствуют в ДС Прокуратуры', r.missing.map((m) => `• <@${m.id}> (${m.displayName})`).join('\n') || 'Все на месте ✅')],
+    embeds: [embed('Отсутствуют в ДС Прокуратуры', fitLines(r.missing.map((m) => `• <@${m.id}> (${safeText(m.displayName)})`)) || 'Все на месте ✅')],
   });
 }
 
@@ -239,7 +239,8 @@ export async function inviteMissing(client, i) {
   if (!ch) return i.editReply('Нет канала на сервере Прокуратуры, где у бота есть право создавать приглашения.');
   let sent = 0;
   for (const m of r.missing) {
-    const inv = await ch.createInvite({ maxAge: 7 * 86400, maxUses: 1, unique: true });
+    const inv = await ch.createInvite({ maxAge: 7 * 86400, maxUses: 1, unique: true }).catch(() => null);
+    if (!inv) continue;
     if (await sendDM(client, m.id, { embeds: [embed('Приглашение в ДС Прокуратуры', `Вы отсутствуете на сервере Прокуратуры.\n${inv.url}`)] })) sent++;
   }
   return i.editReply(`Приглашений отправлено: ${sent} из ${r.missing.length} (у остальных закрыты ЛС).`);

@@ -163,3 +163,15 @@ export function prettyPayload(p, edit = false) {
 
 /** Канал, куда падают заявки на отпуск/увольнение: отдельный из /setup, иначе канал панели. */
 export const requestsChannelId = () => (panelOf('requests') ?? panelOf('vacations'))?.channel_id ?? null;
+
+/** Список строк в одну карточку (лимит Discord ~4000 символов): что не влезло — «…и ещё N» */
+export function fitLines(lines, max = 3900) {
+  const out = [];
+  let size = 0;
+  for (const [k, l] of lines.entries()) {
+    if (size + l.length + 1 > max) { out.push(`…и ещё ${lines.length - k}`); break; }
+    out.push(l);
+    size += l.length + 1;
+  }
+  return out.join('\n');
+}

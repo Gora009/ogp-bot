@@ -5,7 +5,7 @@ import {
 import { db, getSetting, setSetting } from './db.js';
 import { applicantFromTitle, fetchComplaintDetails, fetchFirstPost, fetchPage, fetchThreads, uniqueThreads } from './forum.js';
 import { analyzeText, docWarnings, mayUseAI, resultEmbed } from './analyze.js';
-import { can, isLeader, isSenior, refreshSeniorFlags } from './access.js';
+import { can, isLeader, isSenior } from './access.js';
 import { accusedIds } from './restricted.js';
 import { rankById, rankOfMember, rankOfText, ranks, reviewersOf } from './hierarchy.js';
 import { conf } from './config.js';
@@ -250,7 +250,7 @@ export function assign(client, c, userId, auto = false) {
     embeds: [
       new EmbedBuilder().setColor(COLOR)
         .setTitle(auto ? '📋 Вам автоматически назначена жалоба' : '📋 Вам назначена жалоба')
-        .setDescription(`${head(f)}\n\n⏰ **Дедлайн закрытия:** ${msk(f.close_by)}`)
+        .setDescription(`${head(f)}\n\n⏰ **Дедлайн ответа:** ${msk(f.respond_by)}\n⏰ **Дедлайн закрытия:** ${msk(f.close_by)}`)
         .setFooter({ text: stamp(now) }),
     ],
   });
@@ -500,7 +500,6 @@ async function postComplaint(client, t) {
               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(t.id, t.number, t.title, t.author, t.url, t.createdTs, dup, nowTs(), t.replies, violator ?? null, restricted,
       applicant ?? applicantFromTitle(t.title), target);
-  if (restricted) for (const g of client.guilds.cache.values()) await refreshSeniorFlags(g).catch(() => {});
   // автоназначение «сразу» — карточка выходит уже с исполнителем (настраивается в /settings)
   if (conf.autoAssignSec() === 0) {
     const uid = pickAuto(getComplaint(t.id));
