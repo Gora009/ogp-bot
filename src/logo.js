@@ -14,6 +14,11 @@ const PATH = fileURLToPath(new URL('../assets/logo.webp', import.meta.url));
 export function installLogo() {
   const create = MessagePayload.create;
   MessagePayload.create = function (target, options, extra) {
+    // карточку заменили обычным текстом («Автонастройка отменена.») — герб-вложение тоже убираем, иначе он остаётся картинкой
+    if (options && typeof options === 'object' && !(options instanceof MessagePayload) && Array.isArray(options.embeds)
+      && !options.embeds.length && !options.files?.length && !('attachments' in options)) {
+      options = { ...options, attachments: [] };
+    }
     // короткие уведомления (__noLogo) идут без герба — он нужен только на панелях и карточках
     if (options && typeof options === 'object' && options.__noLogo) {
       const { __noLogo, __edit, ...rest } = options;
