@@ -55,8 +55,8 @@ export function listProsecutors({ seniorOnly = false, exclude = [] } = {}) {
   const n = nowTs();
   const skip = new Set(exclude);
   return db.prepare(`
-    SELECT p.*, EXISTS(SELECT 1 FROM vacations v WHERE v.user_id=p.user_id AND v.status='approved'
-                       AND v.start_ts<=? AND v.end_ts>=?) AS vacation
+    SELECT p.*, (p.on_leave OR EXISTS(SELECT 1 FROM vacations v WHERE v.user_id=p.user_id AND v.status='approved'
+                       AND v.start_ts<=? AND v.end_ts>=?)) AS vacation
     FROM prosecutors p ORDER BY name COLLATE NOCASE`).all(n, n)
     .filter((p) => !skip.has(p.user_id) && (!seniorOnly || p.senior));
 }
@@ -97,14 +97,14 @@ export const displayNameOf = (id) => (id ? db.prepare('SELECT name FROM prosecut
 /** «Gora💢 (@Gora💢)» — ник и тег; если ник неизвестен — только тег */
 export const nameAndTag = (id) => (!id ? '—' : displayNameOf(id) ? `${safeText(displayNameOf(id))} (<@${id}>)` : `<@${id}>`);
 
-/** ЛС с учётом журнала (для /clear_all_dm). true — доставлено. */
+/** ЛС с учётом журнала (для /clear_all_dm). Возвращает отправленное сообщение или false. */
 export async function sendDM(client, userId, payload) {
   let user = null;
   try {
     user = await client.users.fetch(userId);
     const m = await user.send(payload);
     db.prepare('INSERT INTO dm_log(channel_id,message_id) VALUES(?,?)').run(m.channelId, m.id);
-    return true;
+    return m;
   } catch (e) {
     // 50007 — нельзя написать: закрыты ЛС от участников сервера или бот заблокирован
     if (e?.code === 50007) await reportDmBlocked(client, userId, user, payload).catch(() => {});

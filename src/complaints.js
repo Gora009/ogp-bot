@@ -246,6 +246,8 @@ export function assign(client, c, userId, auto = false) {
     // срок считается от подачи жалобы на форуме, а не от назначения; при переназначении не сбрасывается
     .run(userId, now, respondByOf(c, now), c.close_by ?? deadlineOf(c), c.thread_id);
   const f = getComplaint(c.thread_id);
+  // прежнему исполнителю — его ЛС «Вам назначена жалоба» меняется на «Жалоба переназначена»
+  if (c.assignee_id && c.assignee_id !== userId && c.dm_message_id) markReassigned(client, c, userId).catch(() => {});
   sendDM(client, userId, {
     embeds: [
       new EmbedBuilder().setColor(COLOR)
@@ -253,8 +255,18 @@ export function assign(client, c, userId, auto = false) {
         .setDescription(`${head(f)}\n\n⏰ **Дедлайн ответа:** ${msk(f.respond_by)}\n⏰ **Дедлайн закрытия:** ${msk(f.close_by)}`)
         .setFooter({ text: stamp(now) }),
     ],
-  });
+  }).then((m) => m && db.prepare('UPDATE complaints SET dm_channel_id=?, dm_message_id=? WHERE thread_id=? AND assignee_id=?')
+    .run(m.channelId, m.id, c.thread_id, userId));
   return f;
+}
+
+/** ЛС прежнего исполнителя: «🔄 Жалоба переназначена» — новый исполнитель и время */
+async function markReassigned(client, c, newId) {
+  const ch = await client.channels.fetch(c.dm_channel_id);
+  const msg = await ch.messages.fetch(c.dm_message_id);
+  await msg.edit({ embeds: [new EmbedBuilder().setColor(C.muted).setTitle('🔄 Жалоба переназначена')
+    .setDescription(`${head(c)}\n\n**Новый исполнитель:** ${nameAndTag(newId)}`)
+    .setFooter({ text: stamp() })] });
 }
 
 /** Наименее загруженный подходящий прокурор (не в отпуске, не обвиняемый, для жалоб на руководство — старший состав) */
@@ -263,7 +275,8 @@ export function pickAuto(c = null, exclude = []) {
   const skip = new Set([...accusedIds(c?.violator), ...exclude, ...assignOff()]);
   const rows = db.prepare(`
     SELECT p.user_id, p.senior, p.rank_id FROM prosecutors p
-    WHERE NOT EXISTS (SELECT 1 FROM vacations v WHERE v.user_id=p.user_id AND v.status='approved'
+    WHERE p.on_leave=0 -- роль «Отпуск», выданная вручную, тоже считается отпуском
+      AND NOT EXISTS (SELECT 1 FROM vacations v WHERE v.user_id=p.user_id AND v.status='approved'
                       AND v.start_ts<=? AND v.end_ts>=?)
     -- старший состав — в последнюю очередь: сначала прокуроры, и только если подходящих нет — СС
     ORDER BY p.senior,

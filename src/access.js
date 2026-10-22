@@ -1,7 +1,8 @@
 import { db } from './db.js';
 import { cfg } from './util.js';
-import { namePerms, positionOf } from './roles.js';
+import { isVacationRole, namePerms, norm, positionOf } from './roles.js';
 import { rankOfMember } from './hierarchy.js';
+import { conf } from './config.js';
 
 db.exec(`CREATE TABLE IF NOT EXISTS access (
   target_id TEXT NOT NULL, kind TEXT NOT NULL, perm TEXT NOT NULL, PRIMARY KEY (target_id, perm))`);
@@ -139,20 +140,25 @@ export const isSeniorMember = (m) => memberHas(m, 'senior') || memberHas(m, 'app
  * взаимодействии с ботом, поэтому прокуроры попадают в базу сами — даже без Server Members Intent.
  * Если право «Прокурор» уже выдано ролям, а у участника его больше нет — запись удаляется.
  */
+/** Есть роль «Отпуск» — из /settings или любая роль с названием «Отпуск» (в том числе выданная вручную) */
+export const hasLeaveRole = (m) => [...(m?.roles?.cache?.values?.() ?? [])]
+  .some((r) => r.id === conf.vacationRoleId() || isVacationRole(norm(r.name)));
+
 export function syncProsecutorRecord(member) {
   if (!member?.roles?.cache || member.user?.bot) return;
   const senior = isSeniorMember(member) ? 1 : 0;
-  const row = db.prepare('SELECT name, senior, position, rank_id FROM prosecutors WHERE user_id=?').get(member.id);
+  const row = db.prepare('SELECT name, senior, position, rank_id, on_leave FROM prosecutors WHERE user_id=?').get(member.id);
+  const leave = hasLeaveRole(member) ? 1 : 0;
   const rank = rankOfMember(member);
   if (senior || memberHas(member, 'prosecutor') || rank) {
     const name = member.displayName ?? member.user?.username ?? member.id;
     // должность — из иерархии (/settings → Иерархия), иначе по правилам ролей
     const position = rank?.name ?? positionOf(member);
     const rankId = rank?.id ?? null;
-    if (!row || row.name !== name || row.senior !== senior || row.position !== position || row.rank_id !== rankId) {
-      db.prepare(`INSERT INTO prosecutors(user_id,name,senior,position,rank_id) VALUES(?,?,?,?,?)
+    if (!row || row.name !== name || row.senior !== senior || row.position !== position || row.rank_id !== rankId || row.on_leave !== leave) {
+      db.prepare(`INSERT INTO prosecutors(user_id,name,senior,position,rank_id,on_leave) VALUES(?,?,?,?,?,?)
                   ON CONFLICT(user_id) DO UPDATE SET name=excluded.name, senior=excluded.senior, position=excluded.position,
-                  rank_id=excluded.rank_id`).run(member.id, name, senior, position, rankId);
+                  rank_id=excluded.rank_id, on_leave=excluded.on_leave`).run(member.id, name, senior, position, rankId, leave);
     }
   } else if (row && hasRulesFor('prosecutor')) {
     db.prepare('DELETE FROM prosecutors WHERE user_id=?').run(member.id);

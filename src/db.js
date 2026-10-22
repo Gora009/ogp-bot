@@ -63,6 +63,7 @@ for (const [table, col] of [
   ['prosecutors', 'senior INTEGER NOT NULL DEFAULT 0'], ['prosecutors', 'position TEXT'], ['prosecutors', 'rank_id INTEGER'], ['complaints', 'target_rank INTEGER'],
   ['cases', 'decided_ts INTEGER'], ['cases', 'action TEXT'], ['cases', 'action_value TEXT'], ['cases', 'action_by TEXT'],
   ['mentorships', 'cancel_reason TEXT'],
+  ['prosecutors', 'on_leave INTEGER NOT NULL DEFAULT 0'], ['complaints', 'dm_channel_id TEXT'], ['complaints', 'dm_message_id TEXT'],
   ['vacations', 'decided_by TEXT'], ['vacations', 'decided_ts INTEGER'], ['vacations', 'reject_reason TEXT'],
   ['vacations', 'channel_id TEXT'], ['vacations', 'message_id TEXT'], ['vacations', 'cancelled_by TEXT'], ['vacations', 'cancelled_ts INTEGER'],
 ]) {

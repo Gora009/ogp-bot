@@ -1,6 +1,6 @@
 import { GatewayIntentBits } from 'discord.js';
 import { db } from './db.js';
-import { hasRulesFor, isSeniorMember, memberHas, syncProsecutorRecord } from './access.js';
+import { hasLeaveRole, hasRulesFor, isSeniorMember, memberHas, syncProsecutorRecord } from './access.js';
 import { positionOf } from './roles.js';
 import { rankOfMember } from './hierarchy.js';
 import { fetchMembers, rememberName } from './util.js';
@@ -29,7 +29,7 @@ export async function syncPeople(client) {
       rememberName(m);
       const rank = rankOfMember(m);
       if (isProsecutorMember(m) || (rank && !m.user.bot)) {
-        pros.set(m.id, { name: m.displayName, senior: isSeniorMember(m) ? 1 : 0, position: rank?.name ?? positionOf(m), rank: rank?.id ?? null });
+        pros.set(m.id, { name: m.displayName, senior: isSeniorMember(m) ? 1 : 0, position: rank?.name ?? positionOf(m), rank: rank?.id ?? null, leave: hasLeaveRole(m) ? 1 : 0 });
       }
       if (isJudgeMember(m)) judges.set(m.id, m.displayName);
     }
@@ -38,10 +38,10 @@ export async function syncPeople(client) {
   let removed = 0;
   // права «Прокурор» ещё никому не выданы — базу не трогаем, чтобы не стереть её по ошибке
   if (hasRulesFor('prosecutor') || hasRulesFor('senior') || hasRulesFor('approve') || hasRulesFor('full')) {
-    const up = db.prepare(`INSERT INTO prosecutors(user_id,name,senior,position,rank_id) VALUES(?,?,?,?,?)
+    const up = db.prepare(`INSERT INTO prosecutors(user_id,name,senior,position,rank_id,on_leave) VALUES(?,?,?,?,?,?)
                            ON CONFLICT(user_id) DO UPDATE SET name=excluded.name, senior=excluded.senior, position=excluded.position,
-                           rank_id=excluded.rank_id`);
-    for (const [id, p] of pros) up.run(id, p.name, p.senior, p.position, p.rank);
+                           rank_id=excluded.rank_id, on_leave=excluded.on_leave`);
+    for (const [id, p] of pros) up.run(id, p.name, p.senior, p.position, p.rank, p.leave);
     for (const r of db.prepare('SELECT user_id FROM prosecutors').all()) {
       if (!pros.has(r.user_id)) { db.prepare('DELETE FROM prosecutors WHERE user_id=?').run(r.user_id); removed++; }
     }

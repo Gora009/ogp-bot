@@ -252,8 +252,9 @@ export async function syncVacationRole(client) {
     const m = guild.members.cache.get(uid);
     if (m && !m.roles.cache.has(roleId)) await m.roles.add(roleId, 'Начался отпуск').catch(() => {});
   }
-  // снимаем только у тех, кто вообще подавал отпуск через бота
-  const known = new Set(db.prepare('SELECT DISTINCT user_id FROM vacations').all().map((r) => r.user_id));
+  // снимаем только у тех, чей отпуск через бота закончился или отменён за последние 2 дня: роль «Отпуск», выданную вручную, не трогаем
+  const known = new Set(db.prepare(`SELECT DISTINCT user_id FROM vacations WHERE (status='approved' AND end_ts BETWEEN ? AND ?)
+                                    OR (status='cancelled' AND cancelled_ts>=?)`).all(n - 2 * 86400, n, n - 2 * 86400).map((r) => r.user_id));
   for (const m of role.members.values()) {
     if (known.has(m.id) && !active.has(m.id)) await m.roles.remove(roleId, 'Отпуск закончился').catch(() => {});
   }
