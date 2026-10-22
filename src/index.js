@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Client, GatewayIntentBits } from 'discord.js';
 import {
   COMMAND_PERMS, can, denyText, setAccessChangeHook, setAccessClient, syncProsecutorRecord, trustedUsers,
@@ -34,6 +35,14 @@ process.on('unhandledRejection', (e) => console.error('unhandledRejection:', e))
 process.on('uncaughtException', (e) => console.error('uncaughtException:', e));
 
 installLog(); // журнал на сервере: data/logs (см. src/log.js)
+// зависания: если что-то надолго заняло бота (тяжёлый расчёт), нажатия в это время ждут — пишем в журнал
+const lag = monitorEventLoopDelay({ resolution: 20 });
+lag.enable();
+setInterval(() => {
+  const max = Math.round(lag.max / 1e6);
+  if (max > 500) console.warn(`⏱ бот был занят ${max} мс подряд (за последнюю минуту)`);
+  lag.reset();
+}, 60_000).unref();
 acquireLock();
 installLogo();
 
@@ -71,6 +80,16 @@ function prettify(i) {
     if (typeof i[m] !== 'function') continue;
     const orig = i[m].bind(i);
     i[m] = (p) => orig(prettyPayload(p, m === 'editReply' || m === 'update'));
+  }
+  // замер первого ответа Discord (его ждёт человек): когда бот начал отвечать и сколько ответ шёл до Discord
+  for (const m of ['reply', 'update', 'deferReply', 'deferUpdate', 'showModal']) {
+    if (typeof i[m] !== 'function') continue;
+    const orig = i[m].bind(i);
+    i[m] = async (...a) => {
+      if (i.ackStart) return orig(...a);
+      i.ackStart = Date.now();
+      try { return await orig(...a); } finally { i.ackEnd = Date.now(); }
+    };
   }
 }
 
@@ -161,13 +180,17 @@ function boot(useMembers) {
 
   client.on('interactionCreate', async (i) => {
     logAction(i); // в журнал: кто что нажал или вызвал
-    // замер скорости: сколько нажатие шло от Discord до бота и сколько бот его обрабатывал
+    // замер скорости до первого ответа (его и ждёт человек; лимит Discord — 3 с):
+    // доставка — от нажатия до бота, бот — его работа до ответа, Discord — сколько ответ шёл до Discord
     const got = Date.now();
     const done = () => {
-      const total = Date.now() - i.createdTimestamp;
-      if (total > 1000) {
-        console.warn(`⏱ ${i.commandName ?? i.customId}: всего ${total} мс (доставка ${got - i.createdTimestamp} мс, ` +
-          `обработка ${Date.now() - got} мс, пинг ${client.ws.ping} мс)`);
+      if (!i.ackStart) return;
+      const delivery = got - i.createdTimestamp;
+      const bot = i.ackStart - got;
+      const api = (i.ackEnd ?? Date.now()) - i.ackStart;
+      if (bot > 800 || delivery + bot + api > 2500) {
+        console.warn(`⏱ ${i.commandName ?? i.customId}: ответ через ${delivery + bot + api} мс (доставка ${delivery} мс, ` +
+          `бот ${bot} мс, Discord ${api} мс, пинг ${client.ws.ping} мс)`);
       }
     };
     try {

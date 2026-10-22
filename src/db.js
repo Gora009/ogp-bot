@@ -5,6 +5,11 @@ mkdirSync('data', { recursive: true });
 export const db = new DatabaseSync('data/bot.db');
 // ждать, а не падать, если база на мгновение занята
 db.exec('PRAGMA busy_timeout = 5000');
+// WAL: запись не блокирует чтение и не ждёт сброса на диск при каждом изменении — быстрее на каждом нажатии;
+// при сбое теряются максимум последние мгновения, база не повреждается
+db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL');
+// при выключении — аккуратно закрыть базу (всё из журнала WAL переносится в bot.db)
+process.on('exit', () => { try { db.close(); } catch { /* уже закрыта */ } });
 
 // Кэш подготовленных запросов: один и тот же SQL компилируется один раз, а не при каждом вызове
 const prepareRaw = db.prepare.bind(db);
