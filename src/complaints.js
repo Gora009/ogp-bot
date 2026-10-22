@@ -247,7 +247,7 @@ export function assign(client, c, userId, auto = false) {
     .run(userId, now, respondByOf(c, now), c.close_by ?? deadlineOf(c), c.thread_id);
   const f = getComplaint(c.thread_id);
   // прежнему исполнителю — его ЛС «Вам назначена жалоба» меняется на «Жалоба переназначена»
-  if (c.assignee_id && c.assignee_id !== userId && c.dm_message_id) markReassigned(client, c, userId).catch(() => {});
+  if (c.assignee_id && c.assignee_id !== userId && c.dm_message_id) markReassigned(client, c, userId).catch((e) => console.error(`ЛС «переназначена» по жалобе №${c.number}: ${e.message}`));
   sendDM(client, userId, {
     embeds: [
       new EmbedBuilder().setColor(COLOR)
