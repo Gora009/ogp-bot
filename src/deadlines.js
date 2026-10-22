@@ -119,8 +119,7 @@ export async function checkDeadlines(client, forumUrl, { force = false } = {}) {
   for (const f of open) {
     // 0) не нажал «Принять» до дедлайна ответа (24 ч с подачи) — вместо первого напоминания «⚠️ Просрочен дедлайн ответа!»
     // исполнителю и карточка в канал просрочек; напоминание этого же этапа уже не шлём
-    // ответ на форуме уже есть — дедлайн ответа выполнен, даже если «Принять» не нажали
-    if (f.status === 'assigned' && f.respond_by && now >= f.respond_by && !f.notified_respond && !(f.replies > 0)) {
+    if (f.status === 'assigned' && f.respond_by && now >= f.respond_by && !f.notified_respond) {
       const stageNow = conf.reminderHours().map((h) => conf.deadlineHours() - h).filter((h) => h > 0)
         .filter((h) => now >= f.close_by - h * 3600).length;
       db.prepare('UPDATE complaints SET notified_respond=1, remind_stage=MAX(remind_stage, ?) WHERE thread_id=?').run(stageNow, f.thread_id);
