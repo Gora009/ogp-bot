@@ -159,8 +159,19 @@ export function infoEmbed(c) {
  * Кого можно назначить на жалобу c: по иерархии (жалобу на ЗГП — Первый ЗГП и ГП и т.д.), никогда — обвиняемого
  * и тех, кому распределение выключено (/distribution off)
  */
-const candidatesOf = (c) => listProsecutors({ exclude: [...accusedIds(c?.violator), ...assignOff()] })
+const candidatesOf = (c) => listProsecutors({ exclude: [...accusedIds(c?.violator), ...offFor(c)] })
   .filter((p) => fitsRank(c, p.rank_id));
+/**
+ * Кому из «распределение выключено» эту жалобу всё же можно дать: если её больше некому рассматривать
+ * (жалоба на Первого ЗГП — только ГП, а ГП выключил себе распределение), выключение не действует.
+ */
+function offFor(c) {
+  const off = assignOff();
+  if (!off.size) return off;
+  const accused = new Set(accusedIds(c?.violator));
+  const others = listProsecutors().some((p) => !off.has(p.user_id) && !accused.has(p.user_id) && fitsRank(c, p.rank_id));
+  return others ? off : new Set();
+}
 
 /** Сколько жалоб сейчас в работе у каждого прокурора — показывается в списке выбора */
 const workload = () => new Map(db.prepare(`SELECT assignee_id id, COUNT(*) n FROM complaints
@@ -272,7 +283,7 @@ async function markReassigned(client, c, newId) {
 /** Наименее загруженный подходящий прокурор (не в отпуске, не обвиняемый, для жалоб на руководство — старший состав) */
 export function pickAuto(c = null, exclude = []) {
   const n = nowTs();
-  const skip = new Set([...accusedIds(c?.violator), ...exclude, ...assignOff()]);
+  const skip = new Set([...accusedIds(c?.violator), ...exclude, ...offFor(c)]);
   const rows = db.prepare(`
     SELECT p.user_id, p.senior, p.rank_id FROM prosecutors p
     WHERE p.on_leave=0 -- роль «Отпуск», выданная вручную, тоже считается отпуском
@@ -288,7 +299,7 @@ export function pickAuto(c = null, exclude = []) {
 /** null — можно назначать; иначе причина отказа */
 function ineligible(c, userId) {
   if (accusedIds(c.violator).includes(userId)) return 'Нельзя назначить жалобу на самого обвиняемого.';
-  if (assignOff().has(userId)) return '⏸ Этому сотруднику распределение жалоб выключено.';
+  if (offFor(c).has(userId)) return '⏸ Этому сотруднику распределение жалоб выключено.';
   if (!fitsRank(c, db.prepare('SELECT rank_id FROM prosecutors WHERE user_id=?').get(userId)?.rank_id)) {
     return `🔒 Эту жалобу рассматривают: ${reviewerNames(c).join(', ') || '—'}.`;
   }
