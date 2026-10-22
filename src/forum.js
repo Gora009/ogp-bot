@@ -102,7 +102,7 @@ function postText($, body) {
 
 /** «Robby Blanc | 269587» → «Robby Blanc»: отрезаем паспорт и разделители */
 export function applicantName(s) {
-  const name = String(s).replace(/[*[\]]/g, '').split(/[|,;/#(]|\s[-–—]\s|\s№|\d{3,}/)[0].replace(/[\s.:-]+$/, '').replace(/\s+/g, ' ').trim();
+  const name = String(s).replace(/[*[\]]/g, '').split(/[|,;/#(]|\s[-–—]\s|\s№|\d{3,}|\s(?:id|айди|паспорт|пасспорт|пасп|номер|ном|pass|passport|п\.)(?=[\s.:№-]|$)/i)[0].replace(/[\s.:-]+$/, '').replace(/\s+/g, ' ').trim();
   return name.length >= 2 ? name.slice(0, 60) : null;
 }
 
