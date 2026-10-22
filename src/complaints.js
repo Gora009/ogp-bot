@@ -265,7 +265,9 @@ export function pickAuto(c = null, exclude = []) {
     SELECT p.user_id, p.senior, p.rank_id FROM prosecutors p
     WHERE NOT EXISTS (SELECT 1 FROM vacations v WHERE v.user_id=p.user_id AND v.status='approved'
                       AND v.start_ts<=? AND v.end_ts>=?)
-    ORDER BY (SELECT COUNT(*) FROM complaints c WHERE c.assignee_id=p.user_id AND c.status IN ('assigned','accepted')),
+    -- старший состав — в последнюю очередь: сначала прокуроры, и только если подходящих нет — СС
+    ORDER BY p.senior,
+             (SELECT COUNT(*) FROM complaints c WHERE c.assignee_id=p.user_id AND c.status IN ('assigned','accepted')),
              RANDOM()`).all(n, n);
   return rows.find((p) => !skip.has(p.user_id) && fitsRank(c, p.rank_id))?.user_id;
 }
