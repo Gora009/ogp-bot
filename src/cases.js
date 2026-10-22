@@ -25,6 +25,8 @@ const isWebUrl = (d) => { try { return ['http:', 'https:'].includes(new URL(d).p
 export const getCase = (uin) => db.prepare('SELECT * FROM cases WHERE uin=?').get(uin);
 /** Номер дела необязателен: без него в базе хранится «б/н-<УИН>» (номер уникален), показываем «без номера» */
 const NO_NUMBER = 'б/н-';
+/** Комментарий к решению: на доработку — «Комментарий к доработке», отклонено — «Причина отклонения» */
+const COMMENT_LABEL = { rework: 'Комментарий к доработке', rejected: 'Причина отклонения' };
 const numberOf = (c) => (c.number?.startsWith(NO_NUMBER) ? 'без номера' : c.number);
 
 export function caseEmbed(c) {
@@ -43,7 +45,7 @@ export function caseEmbed(c) {
   // решение по одобренному делу — отдельной строкой, чтобы статус не переносился
   if (c.status === 'approved' && c.action) e.addFields({ name: 'Решение', value: actionText(c) });
   e.addFields({ name: 'Документ', value: docLink(c.document) });
-  if (c.status === 'rework' && c.comment) e.addFields({ name: 'Комментарий к доработке', value: safeText(c.comment) });
+  if (COMMENT_LABEL[c.status] && c.comment) e.addFields({ name: COMMENT_LABEL[c.status], value: safeText(c.comment) });
   return e;
 }
 
@@ -76,7 +78,7 @@ export function reviewEmbed(c) {
     `**Обвиняемый:** ${safeText(c.accused)}`,
     `**Статус:** ${STATUS[c.status]}${c.status === 'approved' && c.action ? ` · ${actionText(c)}` : ''}`,
     `**Проверил:** <@${c.decided_by}>`,
-    ...(c.status === 'rework' && c.comment ? [`**Комментарий к доработке:** ${safeText(c.comment)}`] : []),
+    ...(COMMENT_LABEL[c.status] && c.comment ? [`**${COMMENT_LABEL[c.status]}:** ${safeText(c.comment)}`] : []),
     '',
     `**Документ:** ${doc}`,
   ];
@@ -110,7 +112,7 @@ function decisionEmbed(c) {
       `**Номер:** ${numberOf(c)}`,
       `**Обвиняемый:** ${safeText(c.accused ?? '—')}`,
       `**Проверил:** ${who ? safeText(who) : `<@${c.decided_by}>`}`,
-      ...(c.status === 'rework' && c.comment ? ['', `**Комментарий к доработке:** ${safeText(c.comment)}`] : []),
+      ...(COMMENT_LABEL[c.status] && c.comment ? ['', `**${COMMENT_LABEL[c.status]}:** ${safeText(c.comment)}`] : []),
     ].join('\n'))
     .setFooter({ text: stamp() });
 }
@@ -425,14 +427,13 @@ async function decide(client, i) {
   if (c.status !== 'pending') return i.update({ embeds: [reviewEmbed(c)], components: reviewComponents(c.uin) });
   const v = i.values[0];
   if (v === 'approve') return i.update({ components: approveRows(c.uin) });
-  if (v === 'rework') {
-    return i.showModal(new ModalBuilder().setCustomId(`case:rw:${c.uin}`).setTitle('Доработка дела').addComponents(
+  // на доработку и отклонить — с комментарием (форма)
+  const rework = v === 'rework';
+  return i.showModal(new ModalBuilder().setCustomId(`case:${rework ? 'rw' : 'rj'}:${c.uin}`)
+    .setTitle(rework ? 'Доработка дела' : 'Отклонение дела').addComponents(
       new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('comment').setLabel('Комментарий к доработке')
+        new TextInputBuilder().setCustomId('comment').setLabel(rework ? 'Комментарий к доработке' : 'Причина отклонения')
           .setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(1000))));
-  }
-  const f = await finalize(client, i, c, 'rejected');
-  return i.update({ embeds: [reviewEmbed(f)], components: reviewComponents(f.uin) });
 }
 
 async function submitRework(client, i) {
@@ -440,7 +441,8 @@ async function submitRework(client, i) {
   if (!c) return i.reply({ content: 'Дело не найдено.', ...EPH });
   if (!canDecide(i, c)) return denyDecide(i, c);
   if (c.status !== 'pending') return i.reply({ content: 'По делу уже принято решение.', ...EPH });
-  const f = await finalize(client, i, c, 'rework', i.fields.getTextInputValue('comment').trim());
+  const status = i.customId.split(':')[1] === 'rj' ? 'rejected' : 'rework';
+  const f = await finalize(client, i, c, status, i.fields.getTextInputValue('comment').trim());
   const payload = { embeds: [reviewEmbed(f)], components: reviewComponents(f.uin) };
   return i.isFromMessage() ? i.update(payload) : i.reply({ ...payload, ...EPH });
 }
@@ -456,7 +458,7 @@ export const requestPanelPayload = () => ({
 
 /* ---------- роутер ---------- */
 /** Действия, после которых карточка дела меняется: правим её копии на других серверах */
-const CASE_CHANGES = new Set(['dec', 'rw', 'act', 'apa', 'apf', 'finem']);
+const CASE_CHANGES = new Set(['dec', 'rw', 'rj', 'act', 'apa', 'apf', 'finem']);
 
 export async function handleCase(client, i) {
   const [, action, uin] = i.customId.split(':');
@@ -476,7 +478,7 @@ async function routeCase(client, i, action) {
   if (action === 'ra') return decideRequest(client, i, true);
   if (action === 'rd') return decideRequest(client, i, false);
   if (action === 'dec') return decide(client, i);
-  if (action === 'rw') return submitRework(client, i);
+  if (action === 'rw' || action === 'rj') return submitRework(client, i); // доработка или отклонение — с комментарием
   if (action === 'act') return chooseAction(client, i); // старые карточки: действие после одобрения
   if (['apa', 'apf', 'apx'].includes(action)) return approveStep(client, i, action);
   if (action === 'finem') {

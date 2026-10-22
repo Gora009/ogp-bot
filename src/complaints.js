@@ -10,7 +10,7 @@ import { accusedIds } from './restricted.js';
 import { rankById, rankOfMember, rankOfText, ranks, reviewersOf } from './hierarchy.js';
 import { conf } from './config.js';
 import { closedText, extendedText, isAlertMessage, resolveAlerts } from './alerts.js';
-import { destinations, editAll, mirrorsOf, pingIn, sendAll } from './mirror.js';
+import { destinations, editAll, mirrorsOf, sendAll } from './mirror.js';
 import { C, COLOR, EPH, displayNameOf, listProsecutors, msk, nameAndTag, nowTs, safeText, sendDM, stamp } from './util.js';
 
 /** Дедлайн ответа (нажать «Принять») — через столько часов после подачи жалобы: время первого напоминания (по умолчанию 24) */
@@ -520,15 +520,8 @@ async function postComplaint(client, t) {
     const uid = pickAuto(getComplaint(t.id));
     if (uid) assign(client, getComplaint(t.id), uid, true);
   }
-  // во все каналы «Жалобы»; упоминаем роли тех, кто рассматривает эту жалобу, — ролями сервера, куда уходит копия
-  const reviewers = target ? reviewersOf(target) : [];
-  const sent = await sendAll(client, complaintChannels(), (ch) => {
-    const payload = messagePayload(getComplaint(t.id));
-    const roles = [...(ch.guild?.roles?.cache?.values?.() ?? [])].filter((r) => reviewers.includes(rankOfText(r.name)?.id)).map((r) => r.id);
-    const ping = roles.length ? pingIn(ch, roles) : '';
-    if (ping) payload.content = `🔒 ${ping}` + (payload.content ? `\n${payload.content}` : '');
-    return payload;
-  }, { kind: 'complaint', ref: t.id });
+  // во все каналы «Жалобы»; упоминается только назначенный исполнитель (в тексте карточки), без ролей
+  const sent = await sendAll(client, complaintChannels(), () => messagePayload(getComplaint(t.id)), { kind: 'complaint', ref: t.id });
   if (sent[0]) db.prepare('UPDATE complaints SET message_id=? WHERE thread_id=?').run(sent[0].id, t.id);
   // дубликат номера — следом отдельное предупреждение, туда же, куда ушла карточка
   if (dup) await sendAll(client, sent.map((m) => m.channelId), { embeds: [duplicateEmbed(getComplaint(t.id))] });
