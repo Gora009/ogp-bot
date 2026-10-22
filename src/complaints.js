@@ -15,8 +15,8 @@ import { C, COLOR, EPH, displayNameOf, listProsecutors, msk, nameAndTag, nowTs, 
 
 /** Дедлайн ответа (нажать «Принять») — через столько часов после подачи жалобы: время первого напоминания (по умолчанию 24) */
 export const respondHours = () => conf.reminderHours()[0] ?? 24;
-/** Срок ответа: от подачи жалобы на форуме; если назначили уже позже — минимум час на то, чтобы принять */
-export const respondByOf = (c, now = nowTs()) => Math.max((c.created_ts ?? now) + respondHours() * 3600, now + 3600);
+/** Срок ответа: от подачи жалобы на форуме; если назначили уже позже — минимум N часов на то, чтобы принять (/settings → Жалобы) */
+export const respondByOf = (c, now = nowTs()) => Math.max((c.created_ts ?? now) + respondHours() * 3600, now + conf.minRespondHours() * 3600);
 export const CLOSE_H = 72;   // дедлайн закрытия
 const PAGE = 25;
 const YELLOW = C.warn;

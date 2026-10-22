@@ -151,6 +151,7 @@ function complaintsView(msg = '') {
       '**Сроки**',
       `Закрыть жалобу: ${conf.deadlineHours()} ч от подачи на форуме`,
       `Дедлайн ответа: ${rem[0] ?? 24} ч от подачи`,
+      `Минимум на ответ после назначения: ${conf.minRespondHours()} ч`,
       `Повтор после просрочки: ${rep > 0 ? `каждые ${rep} ч` : 'нет'}`,
       '',
       '**Ответственные за дедлайны**',
@@ -322,6 +323,7 @@ const MODALS = {
     input('auto', 'Назначение, сек (0 — сразу, -1 — вручную)', conf.autoAssignSec(), TextInputStyle.Short, 6),
     input('deadline', 'Срок закрытия жалобы, часов', conf.deadlineHours(), TextInputStyle.Short, 4),
     input('rem', 'Дедлайн ответа, часов от подачи', conf.reminderHours()[0] ?? 24, TextInputStyle.Short, 3),
+    input('min', 'Минимум на ответ после назначения, часов', conf.minRespondHours(), TextInputStyle.Short, 3),
     input('rep', 'Повтор после просрочки, часов (0 — нет)', conf.repeatHours(), TextInputStyle.Short, 3)),
   instr: () => new ModalBuilder().setCustomId('set:s:instr').setTitle('Инструкция кураторства').addComponents(
     input('text', 'Текст инструкции', getSetting('mentor_instruction') ?? '', TextInputStyle.Paragraph, 4000, false)),
@@ -339,13 +341,16 @@ function submitModal(i, kind) {
     const deadline = Number(v('deadline'));
     const rep = Number(v('rep'));
     const rem = Number(v('rem'));
+    const min = Number(v('min'));
     if (!Number.isInteger(auto) || auto < -1 || auto > 86400) return ['complaints', 'Назначение: целое число секунд, 0 или -1.'];
     if (!Number.isInteger(deadline) || deadline < 1 || deadline > 720) return ['complaints', 'Срок закрытия: от 1 до 720 часов.'];
     if (!Number.isInteger(rep) || rep < 0 || rep > 168) return ['complaints', 'Повтор: от 0 до 168 часов.'];
     if (!Number.isInteger(rem) || rem < 1 || rem >= deadline) return ['complaints', `Дедлайн ответа: от 1 до ${deadline - 1} часов.`];
     setConf('auto_assign_seconds', auto);
     setConf('deadline_hours', deadline);
+    if (!Number.isInteger(min) || min < 1 || min > 168) return ['complaints', 'Минимум на ответ: от 1 до 168 часов.'];
     setConf('reminder_hours', rem);
+    setConf('min_respond_hours', min);
     setConf('overdue_repeat_hours', rep);
     return ['complaints', 'Сохранено.'];
   }

@@ -18,6 +18,8 @@ export const conf = {
   deadlineHours: () => num('deadline_hours', 'DEADLINE_HOURS', 72),
   /** Напоминания исполнителю — через сколько часов после подачи */
   reminderHours: () => (getSetting('reminder_hours') ?? '24,48').split(',').map(Number).filter((h) => h > 0).sort((a, b) => a - b),
+  /** Минимум часов на «Принять» после назначения — если дедлайн ответа от подачи уже прошёл (старая жалоба) */
+  minRespondHours: () => num('min_respond_hours', 'MIN_RESPOND_HOURS', 1),
   /** Повтор исполнителю после просрочки, каждые N часов (0 — не повторять) */
   repeatHours: () => num('overdue_repeat_hours', 'OVERDUE_REPEAT_HOURS', 2),
   /** Роль «Отпуск» */
