@@ -72,7 +72,7 @@ const row = (...c) => new ActionRowBuilder().addComponents(...c);
 const btn = (id, label, style = ButtonStyle.Secondary) => new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style);
 
 const PERM_EMOJI = {
-  full: '👑', setup: '🔧', staff: '👥', monitor: '⏰', approve: '✅', assign: '📝', judge: '⚖️',
+  full: '👑', setup: '🔧', staff: '👥', monitor: '⏰', approve: '✅', assign: '📝', case_review: '📁', judge: '⚖️',
   prosecutor: '👤', senior: '⭐', case_register: '📂', mentoring: '🎓', ai: '🤖', mentoring_text: '📖',
 };
 const mentions = (roles, users) => [...roles.map((r) => `<@&${r}>`), ...users.map((u) => `<@${u}>`)].join(' ') || '-# не выдано';

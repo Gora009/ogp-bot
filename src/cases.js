@@ -169,10 +169,15 @@ async function applyAction(client, i, c, action, value) {
   sendDM(client, f.prosecutor_id, { embeds: [decisionEmbed(f)] });
 }
 
-const canSee = (i, c) => c.prosecutor_id === i.user.id || isLeader(i) || isJudge(i);
+/**
+ * Рассматривать дела (решение, все дела, запросы): право «Рассмотрение дел» и судьи. Пока это право никому не выдано —
+ * как раньше: старший состав и «Одобрение заявок». Полный доступ — всегда.
+ */
+const reviewsCases = (i) => isJudge(i) || (hasRulesFor('case_review') ? can(i, 'case_review') : isSenior(i) || isLeader(i));
+const canSee = (i, c) => c.prosecutor_id === i.user.id || reviewsCases(i);
 /** Решение по делу (одобрить / на доработку / отклонить, действие): старший состав прокуратуры; судьи — тоже */
 // своё дело решает другой (кроме ГП с полным доступом)
-const canDecide = (i, c) => (isSenior(i) || isLeader(i) || isJudge(i)) && (c.prosecutor_id !== i.user.id || can(i, 'full'));
+const canDecide = (i, c) => reviewsCases(i) && (c.prosecutor_id !== i.user.id || can(i, 'full'));
 const denyDecide = (i, c) => i.reply({ content: c.prosecutor_id === i.user.id ? '⛔ Решение по своему делу принимает другой сотрудник.' : '⛔ Нет прав.', ...EPH });
 
 /* ---------- регистрация дела: команда /register_case и панель «Уголовные дела» ---------- */

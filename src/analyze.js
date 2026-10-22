@@ -811,7 +811,7 @@ export function resultEmbeds({ title, url, typeLabel, text, ai, cached, limited,
  * сотрудникам прокуратуры и судьям (как раньше); выдали хотя бы одной роли или человеку — только им.
  * Полный доступ, владелец сервера и владелец бота — всегда.
  */
-const STAFF = ['full', 'setup', 'staff', 'monitor', 'approve', 'assign', 'senior', 'prosecutor', 'case_register', 'judge', 'mentoring'];
+const STAFF = ['full', 'setup', 'staff', 'monitor', 'approve', 'assign', 'senior', 'prosecutor', 'case_register', 'case_review', 'judge', 'mentoring'];
 const aiPerms = () => (hasRulesFor('ai') ? ['ai', 'full'] : STAFF);
 
 /** Может ли автор нажатия/команды пользоваться ИИ. В ЛС ролей нет — ищем человека на серверах бота. */
