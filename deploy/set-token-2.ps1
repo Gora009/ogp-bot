@@ -5,8 +5,15 @@ Set-Location (Split-Path $PSScriptRoot)
 $server = (Get-Content 'deploy\server.local' -TotalCount 1).Trim()
 $key = Join-Path $env:USERPROFILE '.ssh\ogp_server'
 
-$secure = Read-Host 'Токен второго бота (Developer Portal -> Bot -> Reset Token), ввод не виден' -AsSecureString
-$token = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)).Trim()
+# токен берётся из буфера обмена (скопируйте его в Developer Portal и запустите скрипт); если там не токен — спросим
+$isToken = { param($t) $t -match '^[\w-]{20,}\.[\w-]{4,}\.[\w-]{20,}$' }
+$token = ''
+try { $token = ([string](Get-Clipboard -Raw)).Trim() } catch { }
+if (& $isToken $token) {
+  Write-Host ('Токен из буфера обмена: ' + $token.Substring(0, 6) + '…' + $token.Substring($token.Length - 4))
+} else {
+  $token = (Read-Host 'Вставьте токен второго бота и нажмите Enter').Trim()
+}
 if ($token -notmatch '^[\w-]{20,}\.[\w-]{4,}\.[\w-]{20,}$') { Write-Host 'Это не похоже на токен бота. Ничего не изменено.'; exit 1 }
 
 # токен идёт через стандартный ввод, а не в командной строке
