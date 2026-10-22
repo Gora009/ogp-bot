@@ -132,7 +132,7 @@ function boot(useMembers) {
     for (const g of [...client.guilds.cache.values()]) await leaveIfForeign(g);
     await admin.registerCommands(client);
     await admin.refreshPanels(client);
-    backfillApplicants(client).then(() => recomputeTargets(client)).then(() => refreshOpenCards(client)).then(() => mnt.refreshOpenMentorships(client)).then(() => vac.fixCancelledCards(client))
+    backfillApplicants(client).then(() => recomputeTargets(client)).then(() => refreshOpenCards(client)).then(() => mnt.refreshOpenMentorships(client)).then(() => vac.fixCancelledCards(client)).then(() => cases.refreshReworkCards(client))
       .catch((e) => console.error('refresh cards:', e.message));
     console.log(`Запущен как ${client.user.tag}; серверов: ${client.guilds.cache.size}; опрос форума каждые ${POLL_MS / 1000}с`);
     loop('poll', POLL_MS, async () => {

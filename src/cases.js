@@ -123,6 +123,9 @@ function money(s) {
   return /^\d+$/.test(digits) ? `$${Number(digits).toLocaleString('ru-RU').replace(/ /g, ' ')}` : String(s).trim();
 }
 
+/** Решение ещё можно принять или изменить: дело ждёт решения или отправлено на доработку */
+const undecided = (c) => c?.status === 'pending' || c?.status === 'rework';
+
 /** Под карточкой: до решения — выбор решения; одобрено без действия — выбор действия; иначе — снова выбор решения */
 const reviewComponents = (uin) => {
   const c = getCase(uin);
@@ -131,8 +134,8 @@ const reviewComponents = (uin) => {
       new StringSelectMenuBuilder().setCustomId(`case:act:${uin}`).setPlaceholder('Действие по одобренному делу...')
         .addOptions(Object.entries(ACTIONS).map(([value, a]) => ({ label: a.label, value, emoji: a.emoji }))))];
   }
-  // решение принято (одобрено, отклонено, на доработке) — менять его нельзя, выбор убирается
-  if (c?.status !== 'pending') return [];
+  // одобрено или отклонено — решение окончательное, выбор убирается; на доработке — выбор остаётся (как в оригинале)
+  if (!undecided(c)) return [];
   return [new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder().setCustomId(`case:dec:${uin}`).setPlaceholder('Выберите решение...')
       .addOptions(
@@ -410,7 +413,7 @@ async function approveStep(client, i, action) {
   if (!c) return i.reply({ content: 'Дело не найдено.', ...EPH });
   if (!canDecide(i, c)) return denyDecide(i, c);
   const done = { embeds: [reviewEmbed(c)], components: reviewComponents(c.uin) };
-  if (c.status !== 'pending') return i.update(done); // уже решено (двойное нажатие)
+  if (!undecided(c)) return i.update(done); // уже решено (двойное нажатие)
   if (action === 'apx') return i.update({ components: reviewComponents(c.uin) });
   if (action === 'apa' && i.values[0] === 'fine') return i.showModal(fineModal(`case:apf:${c.uin}`));
   const [act, value] = action === 'apf' ? ['fine', money(i.fields.getTextInputValue('sum'))] : [i.values[0], null];
@@ -424,7 +427,7 @@ async function decide(client, i) {
   if (!c) return i.reply({ content: 'Дело не найдено.', ...EPH });
   if (!canDecide(i, c)) return denyDecide(i, c);
   // решение уже принято (старая карточка со списком) — не меняем, только убираем выбор с карточки
-  if (c.status !== 'pending') return i.update({ embeds: [reviewEmbed(c)], components: reviewComponents(c.uin) });
+  if (!undecided(c)) return i.update({ embeds: [reviewEmbed(c)], components: reviewComponents(c.uin) });
   const v = i.values[0];
   if (v === 'approve') return i.update({ components: approveRows(c.uin) });
   // на доработку и отклонить — с комментарием (форма)
@@ -440,7 +443,7 @@ async function submitRework(client, i) {
   const c = getCase(i.customId.split(':')[2]);
   if (!c) return i.reply({ content: 'Дело не найдено.', ...EPH });
   if (!canDecide(i, c)) return denyDecide(i, c);
-  if (c.status !== 'pending') return i.reply({ content: 'По делу уже принято решение.', ...EPH });
+  if (!undecided(c)) return i.reply({ content: 'По делу уже принято решение.', ...EPH });
   const status = i.customId.split(':')[1] === 'rj' ? 'rejected' : 'rework';
   const f = await finalize(client, i, c, status, i.fields.getTextInputValue('comment').trim());
   const payload = { embeds: [reviewEmbed(f)], components: reviewComponents(f.uin) };
@@ -486,5 +489,12 @@ async function routeCase(client, i, action) {
     if (!c) return i.reply({ content: 'Дело не найдено.', ...EPH });
     if (!canDecide(i, c)) return denyDecide(i, c);
     return applyAction(client, i, c, 'fine', money(i.fields.getTextInputValue('sum')));
+  }
+}
+
+/** При запуске: карточкам дел на доработке — снова выбор решения (раньше он убирался) */
+export async function refreshReworkCards(client) {
+  for (const c of db.prepare(`SELECT * FROM cases WHERE status='rework'`).all()) {
+    await editAll(client, 'case', c.uin, { embeds: [reviewEmbed(c)], components: reviewComponents(c.uin) }).catch(() => {});
   }
 }
