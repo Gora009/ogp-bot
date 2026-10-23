@@ -1,5 +1,5 @@
 import {
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ModalBuilder, StringSelectMenuBuilder,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, LabelBuilder, ModalBuilder, StringSelectMenuBuilder,
   TextInputBuilder, TextInputStyle,
 } from 'discord.js';
 import { db, getSetting, setSetting } from './db.js';
@@ -439,23 +439,33 @@ async function handleComplaint(client, i) {
   if (action === 'cl') {
     if (!canAct(i, c) && !canControl(i)) return deny(i);
     if (c.status === 'closed') return alreadyClosed(i, c);
-    return i.showModal(new ModalBuilder().setCustomId(`c:cm:${c.thread_id}`).setTitle('Закрытие жалобы').addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('link').setLabel('Ссылка на ответ').setStyle(TextInputStyle.Short)
+    // статус — выбором из списка, а не текстом: опечатка («отказано», «не удовл») больше не срывает закрытие
+    return i.showModal(new ModalBuilder().setCustomId(`c:cm:${c.thread_id}`).setTitle('Закрытие жалобы').addLabelComponents(
+      new LabelBuilder().setLabel('Ссылка на ответ').setTextInputComponent(
+        new TextInputBuilder().setCustomId('link').setStyle(TextInputStyle.Short)
           .setPlaceholder('https://forum.gta5rp.com/threads/...').setRequired(true).setMaxLength(300)),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('result').setLabel('Статус (удовлетворена / отклонена)')
-          .setStyle(TextInputStyle.Short).setValue('удовлетворена').setRequired(true).setMaxLength(30))));
+      new LabelBuilder().setLabel('Статус').setStringSelectMenuComponent(
+        new StringSelectMenuBuilder().setCustomId('result').setPlaceholder('Выберите статус').addOptions(
+          { label: 'Удовлетворена', value: 'satisfied', emoji: '🟢' },
+          { label: 'Отклонена', value: 'rejected', emoji: '🔴' }))));
   }
   if (action === 'cm') {
     if (!canAct(i, c) && !canControl(i)) return deny(i);
     if (c.status === 'closed') return alreadyClosed(i, c);
     const link = i.fields.getTextInputValue('link').trim();
-    const raw = i.fields.getTextInputValue('result').trim().toLowerCase();
-    if (!/^https?:\/\/forum\.gta5rp\.com\/threads\//i.test(link)) {
-      return i.reply({ content: 'Ссылка должна вести на тему форума: https://forum.gta5rp.com/threads/...', ...EPH });
+    // любая ссылка на форум: тема, сообщение (/threads/…/post-…, /posts/…), goto
+    if (!/^https?:\/\/(www\.)?forum\.gta5rp\.com\/\S+/i.test(link)) {
+      console.warn(`Жалоба №${c.number} не закрыта: ссылка не на форум (${link.slice(0, 80)})`);
+      return i.reply({ content: 'Ссылка должна вести на форум: https://forum.gta5rp.com/threads/...', ...EPH });
     }
-    const result = raw.startsWith('удовл') ? 'satisfied' : raw.startsWith('откл') ? 'rejected' : null;
+    // новый вид формы — выбор из списка; старая форма (открыта до обновления) — текст
+    let result = null;
+    try { result = i.fields.getStringSelectValues('result')[0] ?? null; } catch { /* старая форма */ }
+    if (!result) {
+      const raw = (() => { try { return i.fields.getTextInputValue('result'); } catch { return ''; } })().trim().toLowerCase();
+      result = /^(не\s*удовл|откл|отказ)/.test(raw) ? 'rejected' : /^удовл/.test(raw) ? 'satisfied' : null;
+    }
+    if (!['satisfied', 'rejected'].includes(result)) result = null;
     if (!result) return i.reply({ content: 'Статус: «удовлетворена» или «отклонена».', ...EPH });
     db.prepare(`UPDATE complaints SET status='closed', result=?, close_url=?, closed_ts=? WHERE thread_id=?`)
       .run(result, link, nowTs(), c.thread_id);
