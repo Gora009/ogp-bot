@@ -196,7 +196,8 @@ async function createCase(client, i, { owner, number, accused, passport, date, d
   if (!reviewChannels.length) return i.reply({ content: 'Канал проверки дел не настроен: /setup panel:Дела на проверку.', ...EPH });
 
   const existing = number ? db.prepare('SELECT * FROM cases WHERE number=?').get(number) : null;
-  if (existing && !(existing.status === 'rework' && existing.prosecutor_id === owner)) {
+  // на доработке или отклонено — тот же прокурор может подать дело снова под тем же номером: запись обновится, УИН тот же
+  if (existing && !(['rework', 'rejected'].includes(existing.status) && existing.prosecutor_id === owner)) {
     return i.reply({ content: `Дело с номером ${number} уже зарегистрировано (УИН ${existing.uin}).`, ...EPH });
   }
   await i.deferReply(EPH);
@@ -210,7 +211,8 @@ async function createCase(client, i, { owner, number, accused, passport, date, d
 
   let uin = existing?.uin;
   if (existing) {
-    db.prepare(`UPDATE cases SET accused=?, passport=?, opened_date=?, document=?, status='pending', comment=NULL
+    db.prepare(`UPDATE cases SET accused=?, passport=?, opened_date=?, document=?, status='pending', comment=NULL,
+                decided_by=NULL, decided_ts=NULL, action=NULL, action_value=NULL, action_by=NULL
                 WHERE uin=?`).run(accused, passport || '—', date, document, uin);
   } else {
     uin = newUin();
