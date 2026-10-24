@@ -3,9 +3,9 @@ import {
   TextInputBuilder, TextInputStyle,
 } from 'discord.js';
 import { db } from './db.js';
-import { deleteAll, destinations, editAll, sendAll } from './mirror.js';
+import { destinations, editAll, sendAll } from './mirror.js';
 import { can, hasRulesFor, isLeader, isJudge, isSenior } from './access.js';
-import { C, COLOR, EPH, isProsecutor, nowTs, parseDate, safeText, sendDM, stamp } from './util.js';
+import { C, COLOR, EPH, isProsecutor, msk, nowTs, parseDate, safeText, sendDM, stamp } from './util.js';
 
 export const STATUS = {
   pending: '⏳ На рассмотрении', approved: '✅ Одобрено', rework: '🔄 На доработке', rejected: '❌ Отклонено',
@@ -161,6 +161,7 @@ async function chooseAction(client, i) {
 
 async function applyAction(client, i, c, action, value) {
   db.prepare('UPDATE cases SET action=?, action_value=?, action_by=? WHERE uin=?').run(action, value, i.user.id, c.uin);
+  addHistory(c.uin, 'decision', i.user.id, { status: 'approved', action, action_value: value });
   const f = getCase(c.uin);
   const payload = { embeds: [reviewEmbed(f)], components: reviewComponents(f.uin) };
   // сюда приходят и выбор из списка (у него нет isFromMessage), и форма штрафа
@@ -206,13 +207,8 @@ async function createCase(client, i, { owner, number, accused, passport, date, d
     });
   }
   await i.deferReply(EPH);
-  if (existing) {
-    await deleteAll(client, 'case', existing.uin); // старые карточки на всех серверах
-    if (existing.review_message_id) {
-      const old = await client.channels.fetch(existing.review_channel_id).catch(() => null);
-      await old?.messages.delete(existing.review_message_id).catch(() => {});
-    }
-  }
+  // старые карточки остаются в канале: без выбора решения и с пометкой «Подано повторно» (история видна в /case_history)
+  if (existing) await retireCards(client, existing);
 
   let uin = existing?.uin;
   if (existing) {
@@ -225,6 +221,7 @@ async function createCase(client, i, { owner, number, accused, passport, date, d
                 VALUES(?,?,?,?,?,?,?,?)`).run(uin, number || `${NO_NUMBER}${uin}`, accused, passport || '—', date, document, owner, nowTs());
   }
   const c = getCase(uin);
+  addHistory(uin, 'submit', i.user.id, { document, accused, passport: passport || '—', opened_date: date });
   const sent = await sendAll(client, reviewChannels, { embeds: [reviewEmbed(c)], components: reviewComponents(uin) }, { kind: 'case', ref: uin });
   if (sent[0]) db.prepare('UPDATE cases SET review_channel_id=?, review_message_id=? WHERE uin=?').run(sent[0].channelId, sent[0].id, uin);
   // прокурору в ЛС — как в оригинале
@@ -401,6 +398,7 @@ async function finalize(client, i, c, status, comment, action = null, value = nu
   db.prepare(`UPDATE cases SET status=?, comment=?, decided_by=?, decided_ts=?, action=?, action_value=?, action_by=?
               WHERE uin=?`).run(status, comment ?? null, i.user.id, nowTs(), action, value, action ? i.user.id : null, c.uin);
   const f = getCase(c.uin);
+  addHistory(c.uin, 'decision', i.user.id, { status, comment: comment ?? null, action, action_value: value });
   sendDM(client, f.prosecutor_id, { embeds: [decisionEmbed(f)] });
   return f;
 }
@@ -488,6 +486,12 @@ export async function handleCase(client, i) {
 async function routeCase(client, i, action) {
   if (action === 'regnew') return canRegister(i) ? i.showModal(registerModal()) : denyRegister(i);
   if (action === 'regm') return submitRegister(client, i);
+  if (action === 'hist') { // листание истории дела
+    const [, , uin, page] = i.customId.split(':');
+    const c = getCase(uin);
+    if (!c || !canSee(i, c)) return i.reply({ content: '⛔ Нет доступа к этому делу.', ...EPH });
+    return i.update(historyView(c, Number(page) || 0));
+  }
   if (action === 'req') return i.showModal(requestModal());
   if (action === 'reqm') return submitRequest(client, i);
   if (action === 'ra') return decideRequest(client, i, true);
@@ -509,4 +513,93 @@ export async function refreshReworkCards(client) {
   for (const c of db.prepare(`SELECT * FROM cases WHERE status='rework'`).all()) {
     await editAll(client, 'case', c.uin, { embeds: [reviewEmbed(c)], components: reviewComponents(c.uin) }).catch(() => {});
   }
+}
+
+/* ---------- история дела: каждая подача и каждое решение (/case_history) ---------- */
+db.exec(`CREATE TABLE IF NOT EXISTS case_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, uin TEXT NOT NULL, round INTEGER NOT NULL, kind TEXT NOT NULL, ts INTEGER NOT NULL,
+  by_id TEXT, status TEXT, comment TEXT, action TEXT, action_value TEXT,
+  document TEXT, accused TEXT, passport TEXT, opened_date TEXT);
+CREATE INDEX IF NOT EXISTS idx_case_history ON case_history(uin, round)`);
+
+/** Записать событие: submit — подача (новая «попытка»), decision — решение по последней подаче */
+function addHistory(uin, kind, byId, data = {}, ts = nowTs()) {
+  const last = db.prepare('SELECT MAX(round) r FROM case_history WHERE uin=?').get(uin).r ?? 0;
+  const round = kind === 'submit' ? last + 1 : Math.max(last, 1);
+  db.prepare(`INSERT INTO case_history(uin,round,kind,ts,by_id,status,comment,action,action_value,document,accused,passport,opened_date)
+              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(uin, round, kind, ts, byId ?? null, data.status ?? null, data.comment ?? null, data.action ?? null, data.action_value ?? null,
+      data.document ?? null, data.accused ?? null, data.passport ?? null, data.opened_date ?? null);
+}
+
+// один раз: делам, зарегистрированным до истории, — подача и решение из текущих данных
+if (!db.prepare("SELECT 1 FROM settings WHERE k='case_history_v1'").get()) {
+  for (const c of db.prepare('SELECT * FROM cases WHERE uin NOT IN (SELECT uin FROM case_history)').all()) {
+    addHistory(c.uin, 'submit', c.prosecutor_id, c, c.created_ts ?? nowTs());
+    if (c.status !== 'pending') addHistory(c.uin, 'decision', c.decided_by, c, c.decided_ts ?? c.created_ts ?? nowTs());
+  }
+  db.prepare("INSERT OR REPLACE INTO settings(k,v) VALUES('case_history_v1','1')").run();
+}
+
+/** Подано повторно: старые карточки остаются в канале — без выбора решения и с пометкой */
+async function retireCards(client, c) {
+  const e = EmbedBuilder.from(reviewEmbed(c).toJSON()).setColor(C.muted);
+  e.setDescription(`${e.data.description ?? ''}\n\n↪️ **Подано повторно** — ${msk(nowTs())} MSK, новая карточка ниже`);
+  const payload = { embeds: [e], components: [] };
+  await editAll(client, 'case', c.uin, payload);
+  // карточки, отправленные до синхронизации серверов, — одна копия без записи в mirrors
+  if (c.review_message_id) {
+    const ch = await client.channels.fetch(c.review_channel_id).catch(() => null);
+    const m = await ch?.messages.fetch(c.review_message_id).catch(() => null);
+    if (m && m.components?.length) await m.edit(payload).catch(() => {});
+  }
+}
+
+const HIST_DECISION = { approved: '✅ Одобрено', rework: '🔄 На доработку', rejected: '❌ Отклонено' };
+
+/** Страница истории: одна подача и решение по ней */
+function historyView(c, page) {
+  const rows = db.prepare('SELECT * FROM case_history WHERE uin=? ORDER BY round, id').all(c.uin);
+  const rounds = [...new Set(rows.map((r) => r.round))];
+  const total = rounds.length;
+  const n = Math.min(Math.max(page, 0), Math.max(total - 1, 0));
+  const items = rows.filter((r) => r.round === rounds[n]);
+  const sub = items.find((r) => r.kind === 'submit');
+  const decisions = items.filter((r) => r.kind === 'decision');
+  const lines = [
+    `**УИН:** ${c.uin}`,
+    `**Прокурор:** <@${c.prosecutor_id}>`,
+    `**Сейчас:** ${STATUS[c.status]}`,
+    '',
+    `## ${n === 0 ? '📝 Подача' : '↪️ Повторная подача'} ${n + 1} из ${total}`,
+  ];
+  if (sub) {
+    lines.push(`**Подано:** ${msk(sub.ts)} MSK — <@${sub.by_id}>`,
+      `**Обвиняемый:** ${safeText(sub.accused ?? '—')}`, `**Паспорт:** ${safeText(sub.passport ?? '—')}`,
+      `**Дата возбуждения:** ${safeText(sub.opened_date ?? '—')}`, `**Документ:** ${docLink(sub.document)}`);
+  }
+  lines.push('');
+  if (!decisions.length) lines.push(n === total - 1 && c.status === 'pending' ? '⏳ **Ждёт решения**' : '— решения не было, дело подано заново');
+  for (const d of decisions) {
+    const act = d.action && ACTIONS[d.action] ? ` · ${ACTIONS[d.action].emoji} ${ACTIONS[d.action].plain({ action_value: d.action_value })}` : '';
+    lines.push(`**Решение:** ${HIST_DECISION[d.status] ?? d.status}${act}`, `**Проверил:** ${d.by_id ? `<@${d.by_id}>` : '—'} — ${msk(d.ts)} MSK`);
+    if (d.comment) lines.push(`**${COMMENT_LABEL[d.status] ?? 'Комментарий'}:** ${safeText(d.comment)}`);
+  }
+  const e = new EmbedBuilder().setColor(STATUS_COLOR[c.status] ?? COLOR).setTitle(`📁 История дела ${numberOf(c)}`.slice(0, 256))
+    .setDescription(lines.join('\n').slice(0, 4000))
+    .setFooter({ text: `Подач: ${total} • ${stamp()}` });
+  const nav = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`case:hist:${c.uin}:${n - 1}`).setLabel('◀ Назад').setStyle(ButtonStyle.Secondary).setDisabled(n <= 0),
+    new ButtonBuilder().setCustomId(`case:hist:${c.uin}:${n + 1}`).setLabel('Вперёд ▶').setStyle(ButtonStyle.Secondary).setDisabled(n >= total - 1));
+  return { embeds: [e], components: total > 1 ? [nav] : [] };
+}
+
+/** /case_history <УИН или номер> — открывается на последней подаче */
+export async function caseHistory(client, i) {
+  const q = i.options.getString('case').trim();
+  const c = getCase(q) ?? db.prepare('SELECT * FROM cases WHERE number=? COLLATE NOCASE').get(q);
+  if (!c) return i.reply({ content: 'Дело не найдено. Укажите УИН или номер дела.', ...EPH });
+  if (!canSee(i, c)) return i.reply({ content: '⛔ Нет доступа к этому делу.', ...EPH });
+  const last = (db.prepare('SELECT MAX(round) r FROM case_history WHERE uin=?').get(c.uin).r ?? 1) - 1;
+  return i.reply({ ...historyView(c, last), ...EPH });
 }

@@ -91,6 +91,10 @@ const list = [
     name: 'case', description: 'Информация о деле по УИН',
     options: [str('uin', '7-значный уникальный идентификатор дела', true, { min_length: 7, max_length: 7 })],
   },
+  {
+    name: 'case_history', description: 'История уголовного дела: все подачи, решения и комментарии',
+    options: [str('case', 'УИН или номер дела', true, { max_length: 60 })],
+  },
   { name: 'cases', description: 'Статистика уголовных дел' },
   { name: 'my_cases', description: 'Мои уголовные дела' },
   { name: 'request_case', description: 'Запросить доступ к делу' },

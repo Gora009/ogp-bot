@@ -56,7 +56,7 @@ const commandHandlers = {
   check_responsible: admin.checkResponsible, sync: admin.sync, distribution,
   complaints: admin.complaintsStats, find_complaint: admin.findComplaint, faq, cabinet,
   vacation: vac.vacation, vacations: vac.vacations, cancel_vacation: vac.cancelVacation,
-  register_case: cases.registerCase, case: cases.caseInfo, cases: cases.casesStats,
+  register_case: cases.registerCase, case: cases.caseInfo, case_history: cases.caseHistory, cases: cases.casesStats,
   my_cases: cases.myCases, request_case: cases.requestCase, curators: mnt.curators, settings, analyze,
 };
 

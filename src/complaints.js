@@ -257,8 +257,11 @@ export function assign(client, c, userId, auto = false) {
     // срок считается от подачи жалобы на форуме, а не от назначения; при переназначении не сбрасывается
     .run(userId, now, respondByOf(c, now), c.close_by ?? deadlineOf(c), c.thread_id);
   const f = getComplaint(c.thread_id);
-  // прежнему исполнителю — его ЛС «Вам назначена жалоба» меняется на «Жалоба переназначена»
-  if (c.assignee_id && c.assignee_id !== userId && c.dm_message_id) markReassigned(client, c, userId).catch((e) => console.error(`ЛС «переназначена» по жалобе №${c.number}: ${e.message}`));
+  // прежнему исполнителю — новое ЛС «🔄 Жалоба переназначена» (с уведомлением)
+  if (c.assignee_id && c.assignee_id !== userId) {
+    sendDM(client, c.assignee_id, { embeds: [new EmbedBuilder().setColor(C.muted).setTitle('🔄 Жалоба переназначена')
+      .setDescription(`${head(c)}\n\n**Новый исполнитель:** ${nameAndTag(userId)}`).setFooter({ text: stamp(now) })] });
+  }
   sendDM(client, userId, {
     embeds: [
       new EmbedBuilder().setColor(COLOR)
@@ -269,15 +272,6 @@ export function assign(client, c, userId, auto = false) {
   }).then((m) => m && db.prepare('UPDATE complaints SET dm_channel_id=?, dm_message_id=? WHERE thread_id=? AND assignee_id=?')
     .run(m.channelId, m.id, c.thread_id, userId));
   return f;
-}
-
-/** ЛС прежнего исполнителя: «🔄 Жалоба переназначена» — новый исполнитель и время */
-async function markReassigned(client, c, newId) {
-  const ch = await client.channels.fetch(c.dm_channel_id);
-  const msg = await ch.messages.fetch(c.dm_message_id);
-  await msg.edit({ embeds: [new EmbedBuilder().setColor(C.muted).setTitle('🔄 Жалоба переназначена')
-    .setDescription(`${head(c)}\n\n**Новый исполнитель:** ${nameAndTag(newId)}`)
-    .setFooter({ text: stamp() })] });
 }
 
 /** Наименее загруженный подходящий прокурор (не в отпуске, не обвиняемый, для жалоб на руководство — старший состав) */
