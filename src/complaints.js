@@ -10,7 +10,7 @@ import { accusedIds } from './restricted.js';
 import { rankById, rankOfMember, rankOfText, ranks, reviewersOf } from './hierarchy.js';
 import { conf } from './config.js';
 import { closedText, extendedText, isAlertMessage, resolveAlerts } from './alerts.js';
-import { destinations, editAll, mirrorsOf, sendAll } from './mirror.js';
+import { deleteAll, destinations, editAll, mirrorsOf, sendAll } from './mirror.js';
 import { C, COLOR, EPH, displayNameOf, listProsecutors, msk, nameAndTag, nowTs, safeText, sendDM, stamp } from './util.js';
 
 /** Дедлайн ответа (нажать «Принять») — через столько часов после подачи жалобы: время первого напоминания (по умолчанию 24) */
@@ -325,16 +325,10 @@ export async function refreshMessage(client, c, exceptMessageId = null) {
   } catch { /* сообщение удалено */ }
 }
 
-/* ---------- переназначение: старая карточка остаётся, новая — отдельным сообщением ---------- */
+/* ---------- переназначение: старая карточка удаляется, новая — отдельным сообщением ---------- */
 /** Карточка жалобы в канале (копия на любом сервере), а не личный список выбора */
 const isComplaintCard = (messageId, c) => !!messageId && (messageId === c.message_id
   || mirrorsOf('complaint', c.thread_id).some((m) => m.message_id === messageId));
-/** Старая карточка после переназначения */
-function reassignedEmbed(c, f, byId) {
-  return new EmbedBuilder().setColor(C.muted).setTitle(`🔄 Жалоба №${c.number ?? '?'} — переназначена`)
-    .setDescription(`${head(c)}\n\n**Было:** ${nameAndTag(c.assignee_id)}\n**Стало:** ${nameAndTag(f.assignee_id)}\n**Переназначил:** <@${byId}>`)
-    .setFooter({ text: stamp() });
-}
 /** Новая карточка жалобы во все каналы «Жалобы»; дальше бот правит уже её */
 async function repostCard(client, f) {
   const sent = await sendAll(client, complaintChannels(), messagePayload(f), { kind: 'complaint', ref: f.thread_id });
@@ -444,13 +438,16 @@ async function handleComplaint(client, i) {
     if (!target) return i.reply({ content: 'Нет других подходящих прокуроров для этой жалобы.', ...EPH });
     const why = ineligible(c, target);
     if (why) return i.reply({ content: why, ...EPH });
-    // переназначение — новым сообщением в канале (новый исполнитель получает упоминание с уведомлением);
-    // старая карточка остаётся без кнопок: «🔄 Переназначена: было → стало»
+    // переназначение — в канале только новое сообщение «📋 @новый, вам назначена жалоба!» (с уведомлением),
+    // старая карточка удаляется; прежнему исполнителю меняется его ЛС (см. assign)
     const f = assign(client, c, target, i.values[0] === 'auto');
-    const old = { content: '', embeds: [reassignedEmbed(c, f, i.user.id)], components: [] };
     const onCard = isComplaintCard(i.message?.id, c);
-    await i.update(onCard ? old : { content: `✅ Жалоба переназначена на <@${f.assignee_id}>.`, embeds: [], components: [] });
-    await editAll(client, 'complaint', c.thread_id, old, onCard ? i.message.id : null);
+    await (onCard ? i.deferUpdate() : i.update({ content: `✅ Жалоба переназначена на <@${f.assignee_id}>.`, embeds: [], components: [] }));
+    await deleteAll(client, 'complaint', c.thread_id);
+    if (c.message_id) { // карточка, отправленная до синхронизации серверов
+      const ch = await client.channels.fetch(complaintChannels()[0]).catch(() => null);
+      await ch?.messages.delete(c.message_id).catch(() => {});
+    }
     await repostCard(client, f);
     return;
   }
