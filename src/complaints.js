@@ -257,10 +257,16 @@ export function assign(client, c, userId, auto = false) {
     // срок считается от подачи жалобы на форуме, а не от назначения; при переназначении не сбрасывается
     .run(userId, now, respondByOf(c, now), c.close_by ?? deadlineOf(c), c.thread_id);
   const f = getComplaint(c.thread_id);
-  // прежнему исполнителю — новое ЛС «🔄 Жалоба переназначена» (с уведомлением)
+  // прежнему исполнителю — его ЛС «Вам назначена жалоба» меняется на «🔄 Жалоба переназначена»;
+  // если то ЛС бот не знает (отправлено до обновления или удалено) — пишет новое
   if (c.assignee_id && c.assignee_id !== userId) {
-    sendDM(client, c.assignee_id, { embeds: [new EmbedBuilder().setColor(C.muted).setTitle('🔄 Жалоба переназначена')
-      .setDescription(`${head(c)}\n\n**Новый исполнитель:** ${nameAndTag(userId)}`).setFooter({ text: stamp(now) })] });
+    const payload = { embeds: [new EmbedBuilder().setColor(C.muted).setTitle('🔄 Жалоба переназначена')
+      .setDescription(`${head(c)}\n\n**Новый исполнитель:** ${nameAndTag(userId)}`).setFooter({ text: stamp(now) })] };
+    (async () => {
+      const ch = c.dm_message_id ? await client.channels.fetch(c.dm_channel_id).catch(() => null) : null;
+      const msg = ch ? await ch.messages.fetch(c.dm_message_id).catch(() => null) : null;
+      if (!msg || !(await msg.edit(payload).then(() => true, () => false))) await sendDM(client, c.assignee_id, payload);
+    })().catch((e) => console.error(`ЛС «переназначена» по жалобе №${c.number}: ${e.message}`));
   }
   sendDM(client, userId, {
     embeds: [
