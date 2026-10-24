@@ -319,6 +319,22 @@ export async function refreshMessage(client, c, exceptMessageId = null) {
   } catch { /* сообщение удалено */ }
 }
 
+/* ---------- переназначение: старая карточка остаётся, новая — отдельным сообщением ---------- */
+/** Карточка жалобы в канале (копия на любом сервере), а не личный список выбора */
+const isComplaintCard = (messageId, c) => !!messageId && (messageId === c.message_id
+  || mirrorsOf('complaint', c.thread_id).some((m) => m.message_id === messageId));
+/** Старая карточка после переназначения */
+function reassignedEmbed(c, f, byId) {
+  return new EmbedBuilder().setColor(C.muted).setTitle(`🔄 Жалоба №${c.number ?? '?'} — переназначена`)
+    .setDescription(`${head(c)}\n\n**Было:** ${nameAndTag(c.assignee_id)}\n**Стало:** ${nameAndTag(f.assignee_id)}\n**Переназначил:** <@${byId}>`)
+    .setFooter({ text: stamp() });
+}
+/** Новая карточка жалобы во все каналы «Жалобы»; дальше бот правит уже её */
+async function repostCard(client, f) {
+  const sent = await sendAll(client, complaintChannels(), messagePayload(f), { kind: 'complaint', ref: f.thread_id });
+  if (sent[0]) db.prepare('UPDATE complaints SET message_id=? WHERE thread_id=?').run(sent[0].id, f.thread_id);
+}
+
 /* ---------- обработчики ---------- */
 const canAct = (i, c) => i.user.id === c.assignee_id || isLeader(i);
 /** Назначать жалобы: роли с правом «Распределение жалоб» и руководство */
@@ -337,7 +353,8 @@ const canReassign = (i) => can(i, 'assign');
 const denyReassign = (i) => i.reply({ content: '⛔ Нет прав: переназначать жалобы может руководство (от ЗГП).', ...EPH });
 
 /** Действия, которые меняют жалобу: после них правим копии карточки на других серверах */
-const CHANGES = new Set(['sel', 'auto', 'acc', 'rs', 'cm', 'xm']);
+// rs (переназначение) сам рассылает новую карточку
+const CHANGES = new Set(['sel', 'auto', 'acc', 'cm', 'xm']);
 
 export async function handleComponent(client, i) {
   const [, action, tid] = i.customId.split(':');
@@ -421,11 +438,14 @@ async function handleComplaint(client, i) {
     if (!target) return i.reply({ content: 'Нет других подходящих прокуроров для этой жалобы.', ...EPH });
     const why = ineligible(c, target);
     if (why) return i.reply({ content: why, ...EPH });
-    // карточка меняется на месте; новому исполнителю уходит ЛС о назначении
+    // переназначение — новым сообщением в канале (новый исполнитель получает упоминание с уведомлением);
+    // старая карточка остаётся без кнопок: «🔄 Переназначена: было → стало»
     const f = assign(client, c, target, i.values[0] === 'auto');
-    if (i.message?.id === c.message_id) return i.update(messagePayload(f));
-    await i.update({ content: `✅ Жалоба переназначена на <@${f.assignee_id}>.`, components: [] }); // старый личный список
-    await refreshMessage(client, f);
+    const old = { content: '', embeds: [reassignedEmbed(c, f, i.user.id)], components: [] };
+    const onCard = isComplaintCard(i.message?.id, c);
+    await i.update(onCard ? old : { content: `✅ Жалоба переназначена на <@${f.assignee_id}>.`, embeds: [], components: [] });
+    await editAll(client, 'complaint', c.thread_id, old, onCard ? i.message.id : null);
+    await repostCard(client, f);
     return;
   }
 
