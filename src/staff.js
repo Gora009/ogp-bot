@@ -32,10 +32,6 @@ export async function applyHierarchy(client) {
 }
 
 /* ---------- /profile — вся статистика сотрудника (старший состав) ---------- */
-const CASE_ICON = { pending: '⏳', approved: '✅', rework: '🔄', rejected: '❌' };
-const MNT_ICON = { active: '🟢', pending: '⏳', done: '✅', failed: '❌', refused: '🚫', cancelled: '⚪' };
-const COMPLAINT_ICON = (c) => (c.status === 'closed' ? ({ satisfied: '🟢', rejected: '🔴' }[c.result] ?? '⚪')
-  : c.status === 'accepted' ? '🟡' : '📋');
 const linked = (text, url) => (url ? `[${text}](${url})` : text);
 const days = (a, b) => Math.max(1, Math.ceil((b - a) / 86400)); // отпуск хранится «начало дня — конец дня»
 
@@ -68,38 +64,43 @@ export async function profile(client, i) {
   const asMentee = db.prepare('SELECT * FROM mentorships WHERE mentee_id=? ORDER BY created_ts DESC LIMIT 1').get(id);
   const resign = db.prepare(`SELECT status, created_ts FROM resignations WHERE user_id=? ORDER BY created_ts DESC LIMIT 1`).get(id);
 
-  const status = now || p?.on_leave ? '🏖️ В отпуске' : resign?.status === 'approved' ? '📄 Уволен' : '✅ На службе';
-  const avg = cs.avg ? `${(cs.avg / 3600).toFixed(1)} ч` : '—';
-  const e = new EmbedBuilder().setColor(C.info).setTitle(`👤 ${name}`.slice(0, 256))
-    .setThumbnail(u.displayAvatarURL())
+  // оформление: по разделам, цифры — колонками по три (как «Инфо» жалобы), значков минимум
+  const status = now || p?.on_leave ? 'в отпуске' : resign?.status === 'approved' ? 'уволен' : 'на службе';
+  const avg = cs.avg ? `${(cs.avg / 3600).toFixed(1).replace('.', ',')} ч` : '—';
+  const col = (name, value) => ({ name, value: String(value ?? 0), inline: true });
+  const section = (name, lines, empty) => ({ name, value: (lines.length ? lines.join('\n') : empty).slice(0, 1024) });
+  const C_STATE = { new: 'новая', assigned: 'назначена', accepted: 'в работе' };
+  const complaintLine = (c) => `${linked(`№${c.number ?? '?'}`, messageUrl(client, 'complaint', c.thread_id, i.guildId) ?? c.url)} — ` +
+    `${c.status === 'closed' ? ({ satisfied: 'удовлетворена', rejected: 'отклонена' }[c.result] ?? 'закрыта') : C_STATE[c.status] ?? c.status}, ${mskDate(c.created_ts)}`;
+  const CASE_STATE = { pending: 'на рассмотрении', approved: 'одобрено', rework: 'на доработке', rejected: 'отклонено' };
+  const caseLine = (c) => `${linked(c.number?.startsWith('б/н-') ? c.uin : safeText(c.number), messageUrl(client, 'case', c.uin, i.guildId))} — ` +
+    `${CASE_STATE[c.status] ?? c.status}, ${safeText(c.accused ?? '—')}`;
+  const VAC_STATE = { approved: 'одобрен', pending: 'на рассмотрении', rejected: 'отклонён', cancelled: 'отменён' };
+  const off = !!db.prepare('SELECT 1 FROM assign_off WHERE user_id=?').get(id);
+
+  const e = new EmbedBuilder().setColor(C.info).setTitle(name.slice(0, 256)).setThumbnail(u.displayAvatarURL())
     .setDescription([
-      `**Сотрудник:** <@${id}>`,
-      `**Должность:** ${p?.position ?? '—'}${p?.senior ? ' • старший состав' : ''}`,
-      `**Статус:** ${status}`,
-      ...(db.prepare('SELECT 1 FROM assign_off WHERE user_id=?').get(id) ? ['**Распределение жалоб:** ⏸ выключено'] : []),
+      `<@${id}> • ${p?.position ?? 'должность не определена'}${p?.senior ? ' • старший состав' : ''}`,
+      `Статус: **${status}**${off ? ' • распределение жалоб выключено' : ''}`,
     ].join('\n'))
     .addFields(
-      { name: '📋 Жалобы', value: [
-        `Всего: **${cs.total ?? 0}** • в работе: **${cs.active ?? 0}**`,
-        `🟢 удовлетворено: **${cs.sat ?? 0}** • 🔴 отклонено: **${cs.rej ?? 0}**`,
-        `⏰ просрочек: **${cs.overdue ?? 0}** • средний срок закрытия: **${avg}**`,
-        ...lastC.map((c) => `${COMPLAINT_ICON(c)} ${linked(`№${c.number ?? '?'}`, messageUrl(client, 'complaint', c.thread_id, i.guildId) ?? c.url)} — ${mskDate(c.created_ts)}`),
-      ].join('\n').slice(0, 1024) },
-      { name: '📁 Уголовные дела', value: [
-        `Всего: **${casesTotal}** • ⏳ ${cases.pending ?? 0} • ✅ ${cases.approved ?? 0} • 🔄 ${cases.rework ?? 0} • ❌ ${cases.rejected ?? 0}`,
-        ...(reviewed ? [`Рассмотрел чужих дел: **${reviewed}**`] : []),
-        ...lastCases.map((c) => `${CASE_ICON[c.status] ?? '•'} ${linked(c.number?.startsWith('б/н-') ? c.uin : safeText(c.number), messageUrl(client, 'case', c.uin, i.guildId))} — ${safeText(c.accused ?? '—')}`),
-      ].join('\n').slice(0, 1024) },
-      { name: '🏖️ Отпуска', value: [
-        `Одобрено: **${approved.length}** (дней: **${vacDays}**) • на рассмотрении: **${vac.filter((v) => v.status === 'pending').length}**`,
-        now ? `Сейчас в отпуске: ${mskDate(now.start_ts)} — ${mskDate(now.end_ts)}` : null,
-        ...vac.slice(0, 3).map((v) => `• ${mskDate(v.start_ts)} — ${mskDate(v.end_ts)} • ${{ approved: '✅', pending: '⏳', rejected: '❌', cancelled: '🚫' }[v.status] ?? ''}`),
-      ].filter(Boolean).join('\n').slice(0, 1024) },
-      { name: '🎓 Кураторство', value: [
-        `Куратор: 🟢 ${asMentor.active ?? 0} • ✅ ${asMentor.done ?? 0} • ❌ ${asMentor.failed ?? 0} • 🚫 ${asMentor.refused ?? 0}`,
-        asMentee ? `Курируемый: ${MNT_ICON[asMentee.status] ?? ''} куратор <@${asMentee.mentor_id}>` : 'Курируемым не был',
-      ].join('\n') },
-      ...(resign ? [{ name: '📄 Увольнение', value: `Заявление от ${mskDate(resign.created_ts)}: ${{ pending: '⏳ на рассмотрении', approved: '✅ одобрено', rejected: '❌ отклонено' }[resign.status] ?? resign.status}` }] : []))
+      section('Жалобы', lastC.map(complaintLine), 'Жалоб не было'),
+      col('Всего', cs.total), col('В работе', cs.active), col('Просрочено', cs.overdue),
+      col('Удовлетворено', cs.sat), col('Отклонено', cs.rej), col('Средний срок', avg),
+
+      section('Уголовные дела', lastCases.map(caseLine), 'Дел не было'),
+      col('Всего', casesTotal), col('Одобрено', cases.approved), col('На рассмотрении', cases.pending),
+      col('На доработке', cases.rework), col('Отклонено', cases.rejected), col('Рассмотрел чужих', reviewed),
+
+      section('Отпуска', [
+        ...(now ? [`Сейчас в отпуске: ${mskDate(now.start_ts)} — ${mskDate(now.end_ts)}`] : []),
+        ...vac.slice(0, 3).map((v) => `${mskDate(v.start_ts)} — ${mskDate(v.end_ts)}, ${VAC_STATE[v.status] ?? v.status}`),
+      ], 'Отпусков не было'),
+      col('Одобрено', approved.length), col('Дней', vacDays), col('На рассмотрении', vac.filter((v) => v.status === 'pending').length),
+
+      section('Кураторство', [asMentee ? `Его куратор: <@${asMentee.mentor_id}>` : 'Курируемым не был'], ''),
+      col('Ведёт сейчас', asMentor.active), col('Успешно', asMentor.done), col('Неуспешно', (asMentor.failed ?? 0) + (asMentor.refused ?? 0)),
+      ...(resign ? [section('Увольнение', [`Заявление от ${mskDate(resign.created_ts)}: ${{ pending: 'на рассмотрении', approved: 'одобрено', rejected: 'отклонено' }[resign.status] ?? resign.status}`], '')] : []))
     .setFooter({ text: stamp() });
   return i.reply({ embeds: [e], ...EPH, __noLogo: true });
 }
