@@ -196,9 +196,14 @@ async function createCase(client, i, { owner, number, accused, passport, date, d
   if (!reviewChannels.length) return i.reply({ content: 'Канал проверки дел не настроен: /setup panel:Дела на проверку.', ...EPH });
 
   const existing = number ? db.prepare('SELECT * FROM cases WHERE number=?').get(number) : null;
-  // на доработке или отклонено — тот же прокурор может подать дело снова под тем же номером: запись обновится, УИН тот же
-  if (existing && !(['rework', 'rejected'].includes(existing.status) && existing.prosecutor_id === owner)) {
-    return i.reply({ content: `Дело с номером ${number} уже зарегистрировано (УИН ${existing.uin}).`, ...EPH });
+  // на рассмотрении, на доработке или отклонено — тот же прокурор может подать дело снова под тем же номером:
+  // запись обновится, УИН тот же, старая карточка заменится новой. Одобренное — нельзя
+  if (existing && !(['pending', 'rework', 'rejected'].includes(existing.status) && existing.prosecutor_id === owner)) {
+    return i.reply({
+      content: `Дело с номером ${number} уже зарегистрировано (УИН ${existing.uin}, ${STATUS[existing.status]}` +
+        (existing.prosecutor_id !== owner ? `, прокурор <@${existing.prosecutor_id}>` : '') + ').',
+      ...EPH,
+    });
   }
   await i.deferReply(EPH);
   if (existing) {
