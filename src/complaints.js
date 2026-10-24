@@ -296,14 +296,28 @@ const complaintChannels = () => destinations('complaints');
  */
 export async function refreshMessage(client, c, exceptMessageId = null) {
   if (!c) return;
-  if (mirrorsOf('complaint', c.thread_id).length) return editAll(client, 'complaint', c.thread_id, messagePayload(c), exceptMessageId);
+  const open = ['new', 'assigned', 'accepted'].includes(c.status);
+  if (mirrorsOf('complaint', c.thread_id).length) {
+    await editAll(client, 'complaint', c.thread_id, messagePayload(c), exceptMessageId);
+    // карточку открытой жалобы удалили из канала вручную — публикуем заново, иначе жалоба «пропадает»
+    if (open && !mirrorsOf('complaint', c.thread_id).length) await repostLost(client, c);
+    return;
+  }
   // карточки, опубликованные до синхронизации серверов, — одна копия в первом канале
   const chId = complaintChannels()[0];
-  if (!chId || !c.message_id || c.message_id === exceptMessageId) return;
+  if (!chId || c.message_id === exceptMessageId) return;
+  if (!c.message_id) { if (open) await repostLost(client, c); return; }
   try {
     const ch = await client.channels.fetch(chId);
     await (await ch.messages.fetch(c.message_id)).edit(messagePayload(c));
-  } catch { /* сообщение удалено */ }
+  } catch (e) {
+    if (e?.code === 10008 && open) await repostLost(client, c); // сообщение удалено
+  }
+}
+async function repostLost(client, c) {
+  if (!complaintChannels().length) return;
+  console.warn(`Карточка жалобы №${c.number} была удалена из канала — публикую заново`);
+  await repostCard(client, c);
 }
 
 /* ---------- переназначение: старая карточка удаляется, новая — отдельным сообщением ---------- */
@@ -667,7 +681,14 @@ export async function publishByNumber(client, forumUrl, number) {
   const t = (await fetchThreads(forumUrl, 3)).find((x) => x.number === number);
   if (!t) return `Жалоба №${number} не найдена на первых 3 страницах форума.`;
   const row = getComplaint(t.id);
-  if (row && row.status !== 'old') return `Жалоба №${number} уже есть в канале жалоб (статус: ${STATUS_TEXT[row.status] ?? row.status}).`;
+  if (row && row.status !== 'old') {
+    // открытая жалоба, чью карточку удалили из канала, — вернуть карточку
+    const before = mirrorsOf('complaint', row.thread_id).map((m) => m.message_id).join();
+    await refreshMessage(client, row);
+    const after = mirrorsOf('complaint', row.thread_id).map((m) => m.message_id).join();
+    if (after !== before) return `✅ Карточка жалобы №${number} была удалена из канала — опубликована заново.`;
+    return `Жалоба №${number} уже есть в канале жалоб (статус: ${STATUS_TEXT[row.status] ?? row.status}).`;
+  }
   if (t.locked) return `Жалоба №${number} уже закрыта на форуме — публиковать нечего.`;
   while (running) await new Promise((r) => setTimeout(r, 300)); // не пересекаемся с опросом
   running = true;
