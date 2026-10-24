@@ -106,6 +106,10 @@ const list = [
       { name: 'list', description: 'Кому распределение выключено', type: O.Subcommand },
     ],
   },
+  {
+    name: 'profile', description: 'Вся статистика сотрудника: жалобы, дела, отпуска, кураторство',
+    options: [{ name: 'user', description: 'Сотрудник', type: O.User, required: true }],
+  },
   { name: 'curators', description: 'Действующие кураторства' },
   { name: 'faq', description: 'FAQ и справка по боту' },
   { name: 'settings', description: 'Все настройки бота в одном окне' },

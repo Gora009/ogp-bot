@@ -50,11 +50,25 @@ export async function fetchComplaintDetails(url) {
   const v = /Сведения о нарушителе[^:\n]*:\s*([\s\S]*?)(?=\n\s*3\s*[.)]|\s3\s*[.)]\s*Подроб|$)/i.exec(text);
   // шаблоны разные: «1. Сведения о заявителе (…):», «1. Ваше Имя и Фамилия:», «1. ФИО:»
   const a = /Сведения о заявителе[^:\n]*:\s*([^\n]*)/i.exec(text)
-    ?? /(?:^|\n)\s*1\s*[.)][^:\n]*(?:заявител|имя|фамили|фио)[^:\n]*:\s*([^\n]*)/i.exec(text);
+    ?? /(?:^|\n)\s*1\s*[.)][^:\n]*(?:заявител|имя|фамили|фио)[^:\n]*:\s*([^\n]*)/i.exec(text)
+    // не по шаблону (ходатайство, обращение в свободной форме): «От Horhe Velaskes», «Я, Horhe Velaskes, …»
+    ?? /(?:^|\n)\s*От\s+([^\n]{3,80})/.exec(text)
+    ?? /(?:^|[\s.])Я,\s*([^,\n]{3,60}),/.exec(text);
   return {
-    violator: v ? v[1].replace(/[[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 400) || null : null,
+    violator: v ? v[1].replace(/[[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 400) || null : violatorFromText(text),
     applicant: a ? applicantName(a[1]) : null,
   };
+}
+
+/**
+ * Нарушитель в тексте не по шаблону: «…проверке законности действий генерального прокурора Nick Rice».
+ * Берём начало текста без адресата («в Офис Генерального прокурора штата …»), иначе любое обращение считалось бы жалобой на ГП.
+ */
+function violatorFromText(text) {
+  const intro = text.slice(0, 1000)
+    .replace(/офис\S*\s+генеральн\S*\s+прокурор\S*(\s+штата(\s+[А-ЯЁA-Z][\w-]*){1,2})?/gi, ' ').replace(/\bОГП\b/g, ' ');
+  const m = /(?:действи\S*|бездействи\S*|жалоб\S*\s+на|нарушени\S*\s+со\s+стороны|в\s+отношении)\s+([^.\n]{3,150})/i.exec(intro);
+  return m ? m[1].replace(/\s+/g, ' ').trim() : null;
 }
 
 /** Полный текст первого сообщения темы (для кнопки «Подробно» в жалобе) */
@@ -98,7 +112,10 @@ function postText($, body) {
 
 /** «Robby Blanc | 269587» → «Robby Blanc»: отрезаем паспорт и разделители */
 export function applicantName(s) {
-  const name = String(s).replace(/[*[\]]/g, '').split(/[|,;/#(]|\s[-–—]\s|\s№|\d{3,}|\s(?:id|айди|паспорт|пасспорт|пасп|номер|ном|pass|passport|п\.)(?=[\s.:№-]|$)/i)[0].replace(/[\s.:-]+$/, '').replace(/\s+/g, ' ').trim();
+  const name = String(s).replace(/[*[\]]/g, '')
+    // «гражданин штата Сан-Андреас Марио Бонг», «гр. Марио Бонг» → «Марио Бонг»
+    .replace(/^\s*(?:я,?\s*)?(?:граждан\S*|гр\.)\s+(?:штата\s+[^\s,]+\s+)?/i, '')
+    .split(/[|,;/#(]|\s[-–—]\s|\s№|\d{3,}|\s(?:id|айди|паспорт|пасспорт|пасп|номер|ном|pass|passport|п\.)(?=[\s.:№-]|$)/i)[0].replace(/[\s.:-]+$/, '').replace(/\s+/g, ' ').trim();
   return name.length >= 2 ? name.slice(0, 60) : null;
 }
 

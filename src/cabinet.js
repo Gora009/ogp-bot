@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { db } from './db.js';
 import { STATUS as CASE_STATUS } from './cases.js';
 import { positionOf } from './roles.js';
+import { messageUrl } from './mirror.js';
 import { COLOR, EPH, isOnVacation, mskDate, nowTs, safeText, stamp } from './util.js';
 
 /**
@@ -14,6 +15,8 @@ const PER = 5;
 const PERIODS = { week: 'За неделю', month: 'За месяц', all: 'Всё время' };
 const STATS = new Set(['load', 'vacations']); // фильтр по периоду — только здесь
 const since = (p) => (p === 'week' ? nowTs() - 7 * 86400 : p === 'month' ? nowTs() - 30 * 86400 : 0);
+/** «№430» — ссылкой на карточку бота (если её нет — на тему форума), иначе просто текстом */
+const linked = (text, url) => (url ? `[${text}](${url})` : text);
 const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 function page(rows, p) {
@@ -111,14 +114,14 @@ export function render(i, view = 'main', period = 'all', p = 0, names = new Map(
     const pg = page(rows, p);
     p = pg.n;
     e.setTitle('📋 Мои жалобы').setDescription(pg.items.map((c) =>
-      `${COMPLAINT_DOT(c)} **№${c.number ?? '?'}** | ${mskDate(c.created_ts)}\n└ ${safeText(clip(c.title ?? '', 48))}`).join('\n\n') || 'Нет жалоб')
+      `${COMPLAINT_DOT(c)} **${linked(`№${c.number ?? '?'}`, messageUrl(i.client, 'complaint', c.thread_id, i.guildId) ?? c.url)}** | ${mskDate(c.created_ts)}\n└ ${safeText(clip(c.title ?? '', 48))}`).join('\n\n') || 'Нет жалоб')
       .setFooter({ text: `Страница ${pg.n + 1}/${pg.pages} • Всего: ${rows.length}` });
   } else if (view === 'cases') {
     const rows = db.prepare('SELECT * FROM cases WHERE prosecutor_id=? ORDER BY created_ts DESC').all(uid);
     const pg = page(rows, p);
     p = pg.n;
     e.setTitle('📁 Мои дела').setDescription(pg.items.map((c) =>
-      `${(CASE_STATUS[c.status] ?? '•').split(' ')[0]} **${c.uin}** | ${mskDate(c.created_ts)}\n└ ${safeText(clip(c.accused ?? '—', 48))}`).join('\n\n') ||
+      `${(CASE_STATUS[c.status] ?? '•').split(' ')[0]} **${linked(c.uin, messageUrl(i.client, 'case', c.uin, i.guildId))}** | ${mskDate(c.created_ts)}\n└ ${safeText(clip(c.accused ?? '—', 48))}`).join('\n\n') ||
       'Нет уголовных дел')
       .setFooter({ text: `Страница ${pg.n + 1}/${pg.pages} • Всего: ${rows.length}` });
   } else if (view === 'vacation') {

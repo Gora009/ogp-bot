@@ -37,7 +37,7 @@ export const COMMAND_PERMS = {
   force_parse: 'monitor', debug_forum: 'monitor', check_deadlines: 'monitor',
   check_responsible: 'monitor',
   curators: 'mentoring',
-  distribution: 'assign', settings: 'setup',
+  distribution: 'assign', settings: 'setup', profile: 'senior',
 };
 
 /** Всегда имеют полный доступ: ADMIN_USER_IDS из .env и владелец(цы) приложения (добавляются при старте) */
@@ -123,7 +123,7 @@ const WHO = {
 };
 const ACTION = {
   panels_list: 'просматривать панели', setup: 'настраивать панели', panel_delete: 'удалять панели', sync: 'синхронизировать команды',
-  settings: 'открывать настройки бота', distribution: 'менять распределение жалоб',
+  settings: 'открывать настройки бота', distribution: 'менять распределение жалоб', profile: 'смотреть статистику сотрудников',
   check_members: 'проверять участников', invite_missing: 'рассылать приглашения', broadcast: 'делать рассылку',
   clear_all_dm: 'удалять ЛС бота', cancel_vacation: 'отменять отпуска', force_parse: 'запускать парсинг форума',
   debug_forum: 'отлаживать парсер', check_deadlines: 'проверять дедлайны',

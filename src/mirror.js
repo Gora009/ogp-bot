@@ -76,3 +76,12 @@ export async function deleteAll(client, kind, ref) {
 
 /** Упоминания ролей — только тех, что есть на сервере канала (на другом сервере свои роли) */
 export const pingIn = (ch, roleIds) => roleIds.filter((id) => ch?.guild?.roles?.cache?.has(id)).map((id) => `<@&${id}>`).join(' ');
+
+/** Ссылка на карточку (сообщение бота) — копию на сервере guildId, иначе любую; null — карточки нет */
+export function messageUrl(client, kind, ref, guildId = null) {
+  const rows = mirrorsOf(kind, ref);
+  const chOf = (r) => client?.channels?.cache?.get(r.channel_id);
+  const pick = rows.find((r) => chOf(r)?.guildId === guildId) ?? rows.find(chOf);
+  const ch = pick && chOf(pick);
+  return ch ? `https://discord.com/channels/${ch.guildId}/${pick.channel_id}/${pick.message_id}` : null;
+}

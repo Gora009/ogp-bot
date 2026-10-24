@@ -302,6 +302,7 @@ Discord-бот Офиса Генерального прокурора (ОГП) �
 | `/curators` | Кураторство |
 | `/register_case` | Регистрация дел |
 | `/analyze` | Разбор документов (ИИ) |
+| `/profile` | Старший состав |
 | `/cabinet`, `/faq`, `/complaints`, `/find_complaint`, `/vacation`, `/vacations`, `/case`, `/cases`, `/my_cases`, `/request_case` | все |
 
 ---
