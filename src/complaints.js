@@ -17,7 +17,6 @@ import { C, COLOR, EPH, displayNameOf, listProsecutors, msk, nameAndTag, nowTs, 
 export const respondHours = () => conf.reminderHours()[0] ?? 24;
 /** Срок ответа: от подачи жалобы на форуме; если назначили уже позже — минимум N часов на то, чтобы принять (/settings → Жалобы) */
 export const respondByOf = (c, now = nowTs()) => Math.max((c.created_ts ?? now) + respondHours() * 3600, now + conf.minRespondHours() * 3600);
-export const CLOSE_H = 72;   // дедлайн закрытия
 const PAGE = 25;
 const YELLOW = C.warn;
 const RESULTS = { satisfied: 'удовлетворена', rejected: 'отклонена' };
@@ -80,14 +79,6 @@ export function targetRankOf(violator) {
   const named = accusedIds(violator).map((id) => rankById(db.prepare('SELECT rank_id FROM prosecutors WHERE user_id=?').get(id)?.rank_id))
     .filter(Boolean).sort((x, y) => x.sort - y.sort);
   return named[0]?.id ?? rankOfText(violator)?.id ?? null;
-}
-// один раз: открытым жалобам — должность нарушителя по новой иерархии (вместо старого «на руководство»)
-if (getSetting('target_rank_v1') === null) {
-  for (const c of db.prepare("SELECT thread_id, violator FROM complaints WHERE status IN ('new','assigned','accepted')").all()) {
-    const t = targetRankOf(c.violator);
-    db.prepare('UPDATE complaints SET target_rank=?, restricted=? WHERE thread_id=?').run(t, t ? 1 : 0, c.thread_id);
-  }
-  setSetting('target_rank_v1', '1');
 }
 
 /** Закрытая жалоба — как в оригинале: «🟢 Жалоба №… — Удовлетворена», тема, заявитель, ссылки, время закрытия */
@@ -238,16 +229,6 @@ export function messagePayload(c, page = 0) {
 /** Дедлайн закрытия: 72 ч с момента подачи жалобы на форуме */
 const deadlineOf = (c) => (c.created_ts ?? nowTs()) + conf.deadlineHours() * 3600;
 
-/**
- * Однократно: жалобам в работе пересчитываем срок от подачи на форуме (раньше считался от назначения).
- * Продлённые вручную сроки не трогаем — у них дедлайн позже, чем «назначение + 72 ч».
- */
-if (getSetting('deadline_from_created') !== '1') {
-  db.prepare(`UPDATE complaints SET close_by=created_ts+?, remind_stage=0
-              WHERE status IN ('assigned','accepted') AND created_ts IS NOT NULL AND close_by<=assigned_ts+?`)
-    .run(CLOSE_H * 3600, CLOSE_H * 3600);
-  setSetting('deadline_from_created', '1');
-}
 /** Назначить жалобу (сбрасывает принятие и просрочки). ЛС исполнителю уходит в фоне. */
 export function assign(client, c, userId, auto = false) {
   const now = nowTs();

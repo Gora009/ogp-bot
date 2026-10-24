@@ -15,7 +15,6 @@ CREATE INDEX IF NOT EXISTS idx_alerts_thread ON overdue_alerts(thread_id);
 CREATE INDEX IF NOT EXISTS idx_alerts_message ON overdue_alerts(message_id);`);
 
 const KIND = { respond: 'Ответ', close: 'Закрытие' };
-export const alertsChannelId = () => destinations('overdue')[0] ?? null;
 export const isAlertMessage = (messageId) => mirrorByMessage(messageId)?.kind === 'alert'
   || !!db.prepare('SELECT 1 FROM overdue_alerts WHERE message_id=?').get(messageId);
 

@@ -82,7 +82,6 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_complaints_status ON complaints(status);
 export const getSetting = (k) => db.prepare('SELECT v FROM settings WHERE k=?').get(k)?.v ?? null;
 export const setSetting = (k, v) =>
   db.prepare('INSERT INTO settings(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').run(k, String(v));
-export const panelOf = (type) => db.prepare('SELECT * FROM panels WHERE type=? ORDER BY id DESC').get(type);
 
 /** Копия базы раз в сутки в data/backups (хранятся 7 последних). Вызывать можно часто — лишних копий не будет. */
 export function backupDb() {

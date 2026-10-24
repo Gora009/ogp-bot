@@ -259,12 +259,3 @@ export async function syncVacationRole(client) {
     if (known.has(m.id) && !active.has(m.id)) await m.roles.remove(roleId, 'Отпуск закончился').catch(() => {});
   }
 }
-
-/** При запуске: карточки недавно отменённых отпусков, которые не обновились (заявки до этого обновления бота) */
-export async function fixCancelledCards(client) {
-  const rows = db.prepare(`SELECT * FROM vacations WHERE status='cancelled' AND message_id IS NULL AND cancelled_ts>?`)
-    .all(nowTs() - 14 * 86400);
-  for (const v of rows) {
-    await updateCards(client, getVac(v.id), { embeds: [decidedEmbed(getVac(v.id))], components: [] });
-  }
-}

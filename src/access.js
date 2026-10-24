@@ -168,8 +168,6 @@ export function syncProsecutorRecord(member) {
 
 export const isLeader = (i) => can(i, 'approve');
 export const isJudge = (i) => can(i, 'judge') || !!db.prepare('SELECT 1 FROM judges WHERE user_id=?').get(i.user.id);
-/** Упоминания ролей, которые должны видеть новые заявки */
-export const leaderPing = () => roleIdsWith('approve').map((r) => `<@&${r}>`).join(' ');
 
 /** Вызывается после любого изменения прав (index.js подключает пересинхронизацию прокуроров и судей) */
 let onAccessChange = null;

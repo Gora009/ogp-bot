@@ -883,10 +883,3 @@ export function docWarnings(text, hidden = []) {
   for (const h of injectionHints(text)) out.push(`В документе есть текст, обращённый к ИИ: «${clip(h, 120)}» — проигнорирован.`);
   return out;
 }
-
-/** Кнопка «Закрыть» на старых ответах /analyze (до перехода на «только вам видно») */
-export async function handleDoc(client, i) {
-  if (i.customId !== 'doc:close') return;
-  await i.deferUpdate();
-  await i.deleteReply().catch(() => {});
-}

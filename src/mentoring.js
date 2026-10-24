@@ -7,8 +7,6 @@ import { destinations, editAll, mirrorsOf, pingIn, sendAll } from './mirror.js';
 import { can, roleIdsWith } from './access.js';
 import { C, COLOR, EPH, isOnVacation, msk, mskDate, nowTs, safeText, sendDM, stamp } from './util.js';
 
-// старые кураторства «ожидает начала» (до отказа от кнопки «Приступить») — считаем начатыми с момента назначения
-db.prepare(`UPDATE mentorships SET status='active', started_ts=COALESCE(started_ts, created_ts) WHERE status='pending'`).run();
 const OPEN = ['pending', 'active'];
 export const STATUS = {
   pending: '⏳ Ожидает начала', active: '🟢 Идёт', done: '✅ Завершено успешно',
@@ -225,13 +223,6 @@ async function submitRefuse(client, i) {
   }));
 }
 
-async function start(client, i, m) {
-  if (!canAct(i, m)) return deny(i, 'Приступить может куратор.');
-  if (m.status !== 'pending') return i.update(payload(m));
-  db.prepare(`UPDATE mentorships SET status='active', started_ts=? WHERE id=?`).run(nowTs(), m.id);
-  return i.update(payload(get(m.id)));
-}
-
 const finishModal = (m) =>
   new ModalBuilder().setCustomId(`mnt:finm:${m.id}`).setTitle('Завершение кураторства').addLabelComponents(
     labelSelect('result', 'Результат', [
@@ -261,8 +252,7 @@ async function submitExtend(client, i, id, kind) {
   const h = Number(i.fields.getTextInputValue('hours'));
   if (!m || !OPEN.includes(m.status)) return i.reply({ content: 'Кураторство уже не активно.', ...EPH });
   if (!Number.isInteger(h) || h < 1 || h > 336) return i.reply({ content: 'Укажите целое число часов от 1 до 336.', ...EPH });
-  if (kind === 's') db.prepare('UPDATE mentorships SET start_by=start_by+?, notified_start=0 WHERE id=?').run(h * 3600, m.id);
-  else db.prepare('UPDATE mentorships SET end_by=end_by+?, notified_end=0, reminded=0 WHERE id=?').run(h * 3600, m.id);
+  db.prepare('UPDATE mentorships SET end_by=end_by+?, notified_end=0, reminded=0 WHERE id=?').run(h * 3600, m.id);
   const f = get(m.id);
   await i.reply({ content: `✅ Продлено на ${h} ч.`, ...EPH });
   await refreshCard(client, f);
@@ -349,7 +339,7 @@ export async function handleMentoring(client, i) {
   const [, action, arg] = i.customId.split(':');
   await routeMentoring(client, i);
   // карточку обновило нажатие — остальные копии на других серверах
-  if (['go', 'finm'].includes(action)) {
+  if (action === 'finm') {
     const m = get(Number(arg));
     if (m) await refreshCard(client, m, i.message?.id).catch(() => {});
   }
@@ -392,7 +382,6 @@ async function routeMentoring(client, i) {
 
   const m = get(id);
   if (!m) return i.reply({ content: 'Кураторство не найдено.', ...EPH });
-  if (action === 'go') return start(client, i, m);
   if (action === 'inf') {
     return i.reply({ embeds: [infoEmbed(m)], components: canManage(i) && OPEN.includes(m.status) ? manageRows(m) : [], ...EPH });
   }
@@ -401,9 +390,9 @@ async function routeMentoring(client, i) {
     if (!OPEN.includes(m.status)) return i.reply({ content: 'Это кураторство уже не активно.', ...EPH });
     return i.showModal(action === 're' ? reassignModal(m) : cancelModal(m));
   }
-  if (action === 'exts' || action === 'exte') {
+  if (action === 'exte') {
     if (!canManage(i)) return deny(i, 'Продлевать сроки может руководство.');
-    return i.showModal(extendModal(m, action === 'exts' ? 's' : 'e'));
+    return i.showModal(extendModal(m, 'e'));
   }
   if (action === 'no') {
     if (!OPEN.includes(m.status)) return i.reply({ content: 'Это кураторство уже не активно.', ...EPH });

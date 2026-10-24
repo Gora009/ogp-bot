@@ -5,7 +5,7 @@ import { EmbedBuilder, MessageFlags, escapeMarkdown } from 'discord.js';
  * и квадратные скобки — иначе можно подсунуть маскированную ссылку [безобидный текст](фишинг).
  */
 export const safeText = (s) => escapeMarkdown(String(s ?? '')).replace(/[[\]]/g, '\\$&');
-import { db, panelOf } from './db.js';
+import { db } from './db.js';
 
 /** Статичная конфигурация сервера (роли, второй сервер) — из .env */
 export const cfg = (name) => process.env[name]?.trim() || null;
@@ -129,40 +129,15 @@ async function reportDmBlocked(client, userId, user, payload) {
 }
 
 /**
- * Простой текстовый ответ бота → аккуратная карточка (embed) в общем стиле: цвет по смыслу (✅ / ⚠️ / ⛔),
- * первая строка — заголовок, если в ней нет упоминаний (в заголовках Discord их не показывает).
- * Ответы со своими embed или файлами не трогаются. edit=true — правка сообщения: старый текст стирается.
+ * Общая обработка текстовых ответов: как в оригинале — обычным текстом. При правке сообщения со старой карточкой
+ * текстом — карточку убираем, иначе текст окажется над ней. Ответы со своими embed или файлами не трогаются.
  */
-/** true — превращать текстовые ответы в карточки (старый вид). Сейчас выключено: ответы как в оригинале, текстом. */
-const CARDS = false;
-const TONE = [
-  [/^(⛔|❌|🚫)/u, C.danger], [/^⚠️/u, C.warn], [/^(✅|🗑️|➕|🔄|📢)/u, C.success],
-];
 export function prettyPayload(p, edit = false) {
   if (typeof p === 'string') p = { content: p };
   if (p?.plain) { const { plain, ...rest } = p; p = rest; } // eslint-disable-line no-unused-vars -- старый флаг «только текст»
-  // как в оригинале: короткие ответы и ошибки — обычным текстом («Вы не можете обновлять список.»).
-  // При правке сообщения со старой карточкой текстом — карточку убираем, иначе текст окажется над ней.
   if (!p?.content || p.embeds?.length || p.files?.length || p.poll) return p;
-  if (!CARDS) return edit ? { ...p, embeds: [] } : p;
-  const text = String(p.content).trim().slice(0, 4000);
-  const color = TONE.find(([re]) => re.test(text))?.[1] ?? C.info;
-  const [first, ...rest] = text.split('\n');
-  const e = new EmbedBuilder().setColor(color);
-  const plainHead = first.length <= 120 && !/<[@#&]|`|\*\*|\]\(/.test(first);
-  if (rest.length && plainHead) {
-    e.setTitle(first.replace(/:\s*$/, ''));
-    const body = rest.join('\n').trim();
-    if (body) e.setDescription(body);
-  } else {
-    e.setDescription(text);
-  }
-  const { content, ...other } = p; // eslint-disable-line no-unused-vars
-  return { ...other, ...(edit ? { content: '' } : {}), embeds: [e], __noLogo: true };
+  return edit ? { ...p, embeds: [] } : p;
 }
-
-/** Канал, куда падают заявки на отпуск/увольнение: отдельный из /setup, иначе канал панели. */
-export const requestsChannelId = () => (panelOf('requests') ?? panelOf('vacations'))?.channel_id ?? null;
 
 /** Список строк в одну карточку (лимит Discord ~4000 символов): что не влезло — «…и ещё N» */
 export function fitLines(lines, max = 3900) {

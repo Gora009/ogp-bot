@@ -36,10 +36,6 @@ export async function fetchThreads(url, pages = 1) {
  * Пункт «2. Сведения о нарушителе (...): <текст>» из первого сообщения жалобы.
  * null — если пункт не найден (другой шаблон).
  */
-export async function fetchViolator(url) {
-  return (await fetchComplaintDetails(url)).violator;
-}
-
 /**
  * Пункты шаблона жалобы из первого сообщения темы:
  *  violator  — «2. Сведения о нарушителе»;

@@ -120,42 +120,8 @@ export function setKeywordsOf(name, keywords) {
   return { ok: true };
 }
 
-/** Текст иерархии списком */
-export function hierarchyLines() {
-  const all = ranks();
-  const nameOf = (id) => all.find((r) => r.id === id)?.name ?? '?';
-  return all.map((r, k) => {
-    const t = targetsOf(r.id).map(nameOf);
-    return `**${k + 1}. ${r.name}** — рассматривает жалобы на: ${t.length ? t.join(', ') : '—'}\n-# слова: ${r.keywords.join(', ') || '—'}`;
-  });
-}
-
 // первый запуск — начальная иерархия (в конце модуля: функции выше уже объявлены)
 if (getSetting('hierarchy_seeded') === null) { resetHierarchy(); setSetting('hierarchy_seeded', '1'); }
-// одноразово: в уже созданную иерархию — формы «1-ый / 1-й заместитель» для Первого ЗГП
-if (getSetting('hierarchy_kw_v2') === null) {
-  const r = rankByName('Первый ЗГП');
-  if (r) setKeywordsOf(r.name, [...new Set([...r.keywords, '1 ый заместитель', '1 й заместитель', '1 заместитель'])]);
-  setSetting('hierarchy_kw_v2', '1');
-}
-// одноразово: «заместитель генерального» / «советник генерального» → только «…генерального прокурора»
-// (иначе «Заместитель Генерального Солиситора» считался ЗГП)
-if (getSetting('hierarchy_kw_v3') === null) {
-  for (const [name, from, to] of [['ЗГП', 'заместитель генерального', 'заместитель генерального прокурора'],
-    ['СГП', 'советник генерального', 'советник генерального прокурора']]) {
-    const r = rankByName(name);
-    if (r?.keywords.includes(from)) setKeywordsOf(r.name, r.keywords.map((k) => (k === from ? to : k)));
-  }
-  setSetting('hierarchy_kw_v3', '1');
-}
-// одноразово: ЗГП рассматривает и жалобы на СГП
-if (getSetting('hierarchy_zgp_sgp') === null) {
-  const z = rankByName('ЗГП');
-  const sg = rankByName('СГП');
-  if (z && sg) db.prepare('INSERT OR IGNORE INTO rank_reviews(reviewer,target) VALUES(?,?)').run(z.id, sg.id);
-  setSetting('hierarchy_zgp_sgp', '1');
-}
-
 /** Поднять / опустить должность в списке (выше — старше: при нескольких ролях берётся самая высокая) */
 export function moveRank(id, dir) {
   const list = ranks();

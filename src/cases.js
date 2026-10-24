@@ -126,14 +126,9 @@ function money(s) {
 /** Решение ещё можно принять или изменить: дело ждёт решения или отправлено на доработку */
 const undecided = (c) => c?.status === 'pending' || c?.status === 'rework';
 
-/** Под карточкой: до решения — выбор решения; одобрено без действия — выбор действия; иначе — снова выбор решения */
+/** Под карточкой — выбор решения, пока дело ждёт решения или на доработке */
 const reviewComponents = (uin) => {
   const c = getCase(uin);
-  if (c?.status === 'approved' && !c.action) {
-    return [new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder().setCustomId(`case:act:${uin}`).setPlaceholder('Действие по одобренному делу...')
-        .addOptions(Object.entries(ACTIONS).map(([value, a]) => ({ label: a.label, value, emoji: a.emoji }))))];
-  }
   // одобрено или отклонено — решение окончательное, выбор убирается; на доработке — выбор остаётся (как в оригинале)
   if (!undecided(c)) return [];
   return [new ActionRowBuilder().addComponents(
@@ -143,32 +138,6 @@ const reviewComponents = (uin) => {
         { label: 'На доработку', value: 'rework', emoji: '🔄' },
         { label: 'Отклонить', value: 'reject', emoji: '❌' }))];
 };
-
-/** Выбор действия по одобренному делу (штраф — с суммой через форму) */
-async function chooseAction(client, i) {
-  const c = getCase(i.customId.split(':')[2]);
-  if (!c) return i.reply({ content: 'Дело не найдено.', ...EPH });
-  if (!canDecide(i, c)) return denyDecide(i, c);
-  if (c.status !== 'approved' || c.action) return i.update({ embeds: [reviewEmbed(c)], components: reviewComponents(c.uin) });
-  const v = i.values[0];
-  if (v === 'fine') {
-    return i.showModal(new ModalBuilder().setCustomId(`case:finem:${c.uin}`).setTitle('Назначение штрафа').addComponents(
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('sum').setLabel('Сумма штрафа ($)')
-        .setPlaceholder('Например: 50000').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(30))));
-  }
-  return applyAction(client, i, c, v, null);
-}
-
-async function applyAction(client, i, c, action, value) {
-  db.prepare('UPDATE cases SET action=?, action_value=?, action_by=? WHERE uin=?').run(action, value, i.user.id, c.uin);
-  addHistory(c.uin, 'decision', i.user.id, { status: 'approved', action, action_value: value });
-  const f = getCase(c.uin);
-  const payload = { embeds: [reviewEmbed(f)], components: reviewComponents(f.uin) };
-  // сюда приходят и выбор из списка (у него нет isFromMessage), и форма штрафа
-  const onCard = !i.isModalSubmit() || i.isFromMessage();
-  await (onCard ? i.update(payload) : i.reply({ ...payload, ...EPH }));
-  sendDM(client, f.prosecutor_id, { embeds: [decisionEmbed(f)] });
-}
 
 /**
  * Рассматривать дела (решение, все дела, запросы): право «Рассмотрение дел» и судьи. Пока это право никому не выдано —
@@ -471,7 +440,7 @@ export const requestPanelPayload = () => ({
 
 /* ---------- роутер ---------- */
 /** Действия, после которых карточка дела меняется: правим её копии на других серверах */
-const CASE_CHANGES = new Set(['dec', 'rw', 'rj', 'act', 'apa', 'apf', 'finem']);
+const CASE_CHANGES = new Set(['dec', 'rw', 'rj', 'apa', 'apf']);
 
 export async function handleCase(client, i) {
   const [, action, uin] = i.customId.split(':');
@@ -498,21 +467,8 @@ async function routeCase(client, i, action) {
   if (action === 'rd') return decideRequest(client, i, false);
   if (action === 'dec') return decide(client, i);
   if (action === 'rw' || action === 'rj') return submitRework(client, i); // доработка или отклонение — с комментарием
-  if (action === 'act') return chooseAction(client, i); // старые карточки: действие после одобрения
   if (['apa', 'apf', 'apx'].includes(action)) return approveStep(client, i, action);
-  if (action === 'finem') {
-    const c = getCase(i.customId.split(':')[2]);
-    if (!c) return i.reply({ content: 'Дело не найдено.', ...EPH });
-    if (!canDecide(i, c)) return denyDecide(i, c);
-    return applyAction(client, i, c, 'fine', money(i.fields.getTextInputValue('sum')));
-  }
-}
 
-/** При запуске: карточкам дел на доработке — снова выбор решения (раньше он убирался) */
-export async function refreshReworkCards(client) {
-  for (const c of db.prepare(`SELECT * FROM cases WHERE status='rework'`).all()) {
-    await editAll(client, 'case', c.uin, { embeds: [reviewEmbed(c)], components: reviewComponents(c.uin) }).catch(() => {});
-  }
 }
 
 /* ---------- история дела: каждая подача и каждое решение (/case_history) ---------- */

@@ -1,7 +1,7 @@
 import { EmbedBuilder } from 'discord.js';
-import { db, getSetting, setSetting } from './db.js';
+import { db } from './db.js';
 import { fetchThreadState, fetchThreads } from './forum.js';
-import { assign, pickAuto, refreshMessage, respondByOf } from './complaints.js';
+import { assign, pickAuto, refreshMessage } from './complaints.js';
 import { postAlert } from './alerts.js';
 import { C, msk, nowTs, sendDM, stamp } from './util.js';
 import { conf } from './config.js';
@@ -13,9 +13,8 @@ let lastForumSync = 0;
 try { db.exec('ALTER TABLE complaints ADD COLUMN forum_gone INTEGER NOT NULL DEFAULT 0'); } catch { /* уже есть */ }
 
 /**
- * Сроки по жалобе (от подачи на форуме): напоминания через 24 и 48 ч, дедлайн закрытия — 72 ч,
- * после него — повтор исполнителю каждые NAG_HOURS ч, пока жалоба не закрыта.
- * Напоминания считаются от дедлайна, поэтому после продления срока сдвигаются вместе с ним.
+ * Сроки по жалобе (от подачи на форуме): дедлайн ответа — нажать «Принять», дедлайн закрытия — закрыть жалобу.
+ * После просрочки — ЛС исполнителю и карточка в канал просрочек, затем повтор исполнителю каждые N часов.
  */
 // значения — в /settings (src/config.js): срок, часы напоминаний, интервал повтора
 
@@ -106,23 +105,11 @@ export async function checkDeadlines(client, forumUrl, { force = false } = {}) {
 
   const now = nowTs();
   const open = db.prepare(OPEN_SQL).all();
-  // один раз: открытым непринятым жалобам — срок ответа по новому правилу (24 ч с подачи). Кому уже ушло
-  // первое напоминание — повторно не пишем, «просрочен ответ» им не придёт
-  if (getSetting('respond_v2') === null) {
-    for (const c of open.filter((x) => x.status === 'assigned' && !x.notified_respond)) {
-      if (c.remind_stage > 0) db.prepare('UPDATE complaints SET notified_respond=1 WHERE thread_id=?').run(c.thread_id);
-      else db.prepare('UPDATE complaints SET respond_by=? WHERE thread_id=?').run(respondByOf(c, c.assigned_ts ?? now), c.thread_id);
-    }
-    setSetting('respond_v2', '1');
-    open.splice(0, open.length, ...db.prepare(OPEN_SQL).all());
-  }
   for (const f of open) {
     // 0) не нажал «Принять» до дедлайна ответа (24 ч с подачи) — вместо первого напоминания «⚠️ Просрочен дедлайн ответа!»
     // исполнителю и карточка в канал просрочек; напоминание этого же этапа уже не шлём
     if (f.status === 'assigned' && f.respond_by && now >= f.respond_by && !f.notified_respond) {
-      const stageNow = conf.reminderHours().map((h) => conf.deadlineHours() - h).filter((h) => h > 0)
-        .filter((h) => now >= f.close_by - h * 3600).length;
-      db.prepare('UPDATE complaints SET notified_respond=1, remind_stage=MAX(remind_stage, ?) WHERE thread_id=?').run(stageNow, f.thread_id);
+      db.prepare('UPDATE complaints SET notified_respond=1 WHERE thread_id=?').run(f.thread_id);
       logSent(`Просрочен ответ по жалобе №${f.number}`, f.assignee_id, await sendDM(client, f.assignee_id, { embeds: [overdueEmbed(f, 'respond')] }));
       await postAlert(client, f, 'respond').catch((e) => console.error('alert:', e.message));
       res.overdueRespond = (res.overdueRespond ?? 0) + 1;
