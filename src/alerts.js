@@ -73,8 +73,7 @@ export async function resolveAlerts(client, c, text, kind = null, card = null) {
     const payload = { embeds: [card ?? alertEmbed(c, r.kind, text)], components: [] };
     if (mirrorsOf('alert', r.id).length) { await editAll(client, 'alert', r.id, payload); continue; }
     try {
-      const msg = await (await client.channels.fetch(r.channel_id)).messages.fetch(r.message_id);
-      await msg.edit(payload);
+      await (await client.channels.fetch(r.channel_id)).messages.edit(r.message_id, payload);
     } catch { /* сообщение удалили — ничего страшного */ }
   }
 }

@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
-import { Client, GatewayIntentBits } from 'discord.js';
+import { Client, GatewayIntentBits, MessageFlags, MessageFlagsBitField } from 'discord.js';
 import {
   COMMAND_PERMS, can, denyText, setAccessChangeHook, setAccessClient, syncProsecutorRecord, trustedUsers,
 } from './access.js';
@@ -66,9 +66,21 @@ const componentHandlers = {
   res: res.handleResign, vac: vac.handleVac, cab: handleCab, auto: handleAuto, set: handleSettings, form: handleForm,
 };
 
-const loop = (name, ms, fn) => {
+/**
+ * Фоновая задача раз в ms. flaky — задача ходит на внешний сайт (форум, Google): единичный сбой связи
+ * не ошибка, следующая попытка через ms пройдёт — пишем в журнал только с 3-й неудачи подряд и когда снова заработало.
+ */
+const loop = (name, ms, fn, { flaky = false } = {}) => {
+  let fails = 0;
   const run = async () => {
-    try { await fn(); } catch (e) { console.error(`${name} error:`, e.message); }
+    try {
+      await fn();
+      if (flaky && fails >= 3) console.log(`${name}: снова работает (было неудач подряд: ${fails})`);
+      fails = 0;
+    } catch (e) {
+      fails++;
+      if (!flaky || fails === 3) console.error(`${name} error${flaky ? ' (3 раза подряд)' : ''}:`, e.message);
+    }
     setTimeout(run, ms);
   };
   run();
@@ -93,8 +105,63 @@ function prettify(i) {
   }
 }
 
+/**
+ * Страховка от «Взаимодействие не удалось»: Discord ждёт первый ответ не дольше 3 секунд.
+ * Если обработчик за 1,5 с не ответил (долгая отправка ЛС, медленный Discord), бот сам отвечает «думает…»,
+ * а последующие reply/update обработчика превращаются в правку этого ответа — обработчики об этом не знают.
+ */
+const AUTO_DEFER_MS = 1500;
+const EPHEMERAL = MessageFlags.Ephemeral;
+const isEphemeral = (p) => !!p && typeof p === 'object' && (p.ephemeral || new MessageFlagsBitField(p.flags ?? 0).has(EPHEMERAL));
+/** Правка сообщения не принимает флаг «видно только вам» — он уже задан при ответе */
+const forEdit = (p) => {
+  if (!p || typeof p !== 'object' || p.flags == null) return p;
+  const { ephemeral, ...rest } = p; // eslint-disable-line no-unused-vars
+  return { ...rest, flags: new MessageFlagsBitField(p.flags).remove(EPHEMERAL).bitfield };
+};
+
+function autoDefer(i) {
+  if (!i.isRepliable() || i.isAutocomplete()) return () => {};
+  let auto = null; // Promise<'update' | 'reply' | null> — какой ответ бот дал сам
+  const timer = setTimeout(() => {
+    if (i.ackStart || i.replied || i.deferred) return;
+    const onMessage = i.isMessageComponent() || (i.isModalSubmit() && i.isFromMessage());
+    i.autoDeferred = true;
+    auto = (onMessage ? i.deferUpdate() : i.deferReply(EPH))
+      .then(() => (onMessage ? 'update' : 'reply'), (e) => { console.warn(`автоответ «думает…» не удался: ${e.message}`); return null; });
+  }, AUTO_DEFER_MS);
+
+  const wrap = (m, fn) => {
+    const orig = i[m].bind(i);
+    i[m] = async (...a) => {
+      const kind = auto && await auto;
+      return kind ? fn(kind, ...a) : orig(...a);
+    };
+  };
+  // кнопка: бот уже ответил «тихо» (deferUpdate), а обработчик хочет отдельный ответ «думает…» + editReply —
+  // его editReply не должен менять карточку: первый становится новым сообщением, следующие правят это сообщение
+  let own = null;
+  wrap('deferReply', (kind, opts) => { if (kind === 'update') own = { flags: opts?.flags }; });
+  wrap('deferUpdate', () => undefined);
+  const editReply = i.editReply.bind(i);
+  i.editReply = async (p) => {
+    if (!own) return editReply(p);
+    const body = typeof p === 'string' ? { content: p } : p;
+    if (!own.msg) return (own.msg = await i.followUp({ ...body, flags: new MessageFlagsBitField(body.flags ?? 0).add(own.flags ?? 0).bitfield }));
+    return editReply({ ...forEdit(body), message: own.msg.id });
+  };
+  // карточка уже с гербом — правка не прикладывает его второй раз (см. logo.js)
+  wrap('update', (kind, p) => i.editReply(p && typeof p === 'object' ? { ...forEdit(p), __edit: true } : p));
+  wrap('reply', async (kind, p) => {
+    if (kind === 'update') return i.followUp(p);
+    if (isEphemeral(p)) return i.editReply(forEdit(p));
+    await i.deleteReply().catch(() => {}); // «думает…» было скрытым, а ответ должен видеть весь канал
+    return i.followUp(p);
+  });
+  return () => clearTimeout(timer);
+}
+
 async function route(client, i) {
-  prettify(i);
   // в ЛС бот команды не принимает, кроме /analyze (кнопки в ЛС, например «Инструкция» куратору, работают)
   if (!i.inGuild() && i.isChatInputCommand() && i.commandName === 'analyze') return analyze(client, i);
   if (!i.inGuild() && (i.isChatInputCommand() || i.isAutocomplete())) {
@@ -129,6 +196,8 @@ function boot(useMembers) {
     intents: [GatewayIntentBits.Guilds, ...(useMembers ? [GatewayIntentBits.GuildMembers] : [])],
     // бот упоминает только конкретных людей и роли; @everyone/@here не сработают ни при каком тексте
     allowedMentions: { parse: ['users', 'roles'], repliedUser: false },
+    // зависшее соединение с Discord: по умолчанию 15 с × 4 попытки (до минуты тишины) — ждём меньше и повторяем один раз
+    rest: { timeout: 10_000, retries: 1 },
   });
 
   // добавили на сервер: свой — регистрируем команды, чужой — сразу выходим
@@ -157,7 +226,7 @@ function boot(useMembers) {
     loop('poll', POLL_MS, async () => {
       const n = await poll(client, admin.FORUM_URL);
       if (n) console.log(`Новых жалоб: ${n}`);
-    });
+    }, { flaky: true });
     loop('deadlines', 60_000, () => checkDeadlines(client, admin.FORUM_URL));
     loop('auto-assign', 10_000, async () => {
       const n = await autoAssign(client);
@@ -174,7 +243,7 @@ function boot(useMembers) {
     loop('forms', 30_000, async () => {
       const n = await pollForms(client);
       if (n) console.log(`Ответов Google Форм: ${n}`);
-    });
+    }, { flaky: true });
     loop('backup', 3_600_000, () => { if (backupDb()) console.log('Резервная копия базы сохранена в data/backups'); });
   });
 
@@ -193,14 +262,18 @@ function boot(useMembers) {
           `бот ${bot} мс, Discord ${api} мс, пинг ${client.ws.ping} мс)`);
       }
     };
+    prettify(i);
+    const stopAutoDefer = autoDefer(i);
     try {
       await route(client, i);
+      stopAutoDefer();
       done();
       // кнопка от старой версии бота или удалённая команда — отвечаем, а не оставляем «не ответило»
       if (i.isRepliable() && !i.replied && !i.deferred) {
         await i.reply({ content: '⚠️ Эта кнопка или команда устарела. Откройте панель или команду заново.', ...EPH });
       }
     } catch (e) {
+      stopAutoDefer();
       console.error(`Ошибка в ${i.commandName ?? i.customId}:`, e);
       const msg = { content: '⚠️ Ошибка при выполнении. Попробуйте ещё раз.', ...EPH };
       if (i.deferred || i.replied) i.followUp(msg).catch(() => {}); else i.reply(msg).catch(() => {});

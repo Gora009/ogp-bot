@@ -129,7 +129,7 @@ async function refreshCard(client, m, exceptMessageId = null) {
   if (!m.channel_id || !m.message_id || m.message_id === exceptMessageId) return;
   try {
     const ch = await client.channels.fetch(m.channel_id);
-    await (await ch.messages.fetch(m.message_id)).edit(payload(m));
+    await ch.messages.edit(m.message_id, payload(m));
   } catch { /* сообщение удалено */ }
 }
 

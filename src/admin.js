@@ -34,7 +34,7 @@ async function putPanel(client, type, channelId, payload = null) {
   for (const p of old) {
     db.prepare('DELETE FROM panels WHERE id=?').run(p.id);
     if (p.message_id) {
-      try { await (await (await client.channels.fetch(p.channel_id)).messages.fetch(p.message_id)).delete(); } catch { /* уже удалено */ }
+      try { await (await client.channels.fetch(p.channel_id)).messages.delete(p.message_id); } catch { /* уже удалено */ }
     }
   }
   const messageId = payload ? (await ch.send(payload)).id : null;
@@ -56,7 +56,7 @@ export async function refreshPanels(client) {
     if (!make) continue;
     try {
       const ch = await client.channels.fetch(p.channel_id);
-      await (await ch.messages.fetch(p.message_id)).edit(make());
+      await ch.messages.edit(p.message_id, make());
     } catch (e) {
       console.error(`Панель «${PANEL_NAMES[p.type] ?? p.type}» не обновлена: ${e.message}`);
     }
@@ -176,7 +176,7 @@ export async function removePanel(client, id) {
   if (!p) return null;
   db.prepare('DELETE FROM panels WHERE id=?').run(p.id);
   if (p.message_id) {
-    try { await (await (await client.channels.fetch(p.channel_id)).messages.fetch(p.message_id)).delete(); } catch { /* уже удалено */ }
+    try { await (await client.channels.fetch(p.channel_id)).messages.delete(p.message_id); } catch { /* уже удалено */ }
   }
   return p;
 }

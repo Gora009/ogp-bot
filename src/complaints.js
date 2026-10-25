@@ -309,7 +309,7 @@ export async function refreshMessage(client, c, exceptMessageId = null) {
   if (!c.message_id) { if (open) await repostLost(client, c); return; }
   try {
     const ch = await client.channels.fetch(chId);
-    await (await ch.messages.fetch(c.message_id)).edit(messagePayload(c));
+    await ch.messages.edit(c.message_id, messagePayload(c));
   } catch (e) {
     if (e?.code === 10008 && open) await repostLost(client, c); // сообщение удалено
   }
