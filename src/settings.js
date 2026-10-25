@@ -206,8 +206,7 @@ function mentorRespView(msg = '') {
       ...note(msg),
     ]), [
       ...nav('staff'),
-      row(sel),
-      row(btn('set:p:staff', '← Назад')),
+      row(sel), // назад — вкладка «Сотрудники» вверху (вторая кнопка с тем же set:p:staff Discord не примет)
     ]);
 }
 
