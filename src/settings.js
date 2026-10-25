@@ -15,6 +15,7 @@ import { autosetup } from './autosetup.js';
 import { faq } from './faq.js';
 import { poll } from './complaints.js';
 import { syncPeople } from './people.js';
+import { mentorResponsible, setMentorResponsible } from './mentoring.js';
 import { logFile } from './log.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -179,13 +180,34 @@ function staffView(msg = '') {
       '**Инструкция кураторства**',
       instr ? `${instr.slice(0, 300)}${instr.length > 300 ? '…' : ''}` : 'не заполнена',
       '',
+      '**Ответственные за кураторство**',
+      mentorResponsible().map((id) => `<@${id}>`).join(' ') || 'не выбраны',
+      '-# Их упоминают, когда кураторство завершено, отменено или куратор отказался.',
+      '',
       '**Базы**',
       `Прокуроров: ${pros.n} (старший состав: ${pros.s ?? 0}), судей: ${judges}`,
       ...note(msg),
     ]), [
       ...nav('staff'),
       row(roleSel),
-      row(btn('set:m:instr', 'Изменить инструкцию кураторства'), btn('set:sync', 'Сверить базы сейчас')),
+      row(btn('set:m:instr', 'Изменить инструкцию кураторства'), btn('set:p:mresp', 'Ответственные за кураторство')),
+      row(btn('set:sync', 'Сверить базы сейчас')),
+    ]);
+}
+
+function mentorRespView(msg = '') {
+  const ids = mentorResponsible();
+  const sel = new UserSelectMenuBuilder().setCustomId('set:mresp').setPlaceholder('Ответственные за кураторство')
+    .setMinValues(0).setMaxValues(25);
+  if (ids.length) sel.setDefaultUsers(ids.slice(0, 25));
+  return page(section('Ответственные за кураторство', 'Сотрудники', [
+      ids.map((id) => `<@${id}>`).join(' ') || 'не выбраны',
+      '-# Бот упоминает их в канале кураторства, когда кураторство завершено (успешно или неуспешно), отменено или куратор отказался.',
+      ...note(msg),
+    ]), [
+      ...nav('staff'),
+      row(sel),
+      row(btn('set:p:staff', '← Назад')),
     ]);
 }
 
@@ -307,7 +329,7 @@ async function handleHierarchy(client, i, sub, id) {
 const view = (client, page, msg) => ({
   main: () => mainView(client, msg), access: () => accessView('prosecutor', msg), complaints: () => complaintsView(msg),
   hierarchy: () => hierarchyView(null, msg),
-  staff: () => staffView(msg), system: () => systemView(client, msg),
+  staff: () => staffView(msg), mresp: () => mentorRespView(msg), system: () => systemView(client, msg),
 }[page] ?? (() => mainView(client, msg)))();
 
 /* ---------- формы ---------- */
@@ -413,6 +435,10 @@ export async function handleSettings(client, i) {
     db.prepare('DELETE FROM deadline_responsible').run();
     for (const u of i.values) db.prepare('INSERT OR IGNORE INTO deadline_responsible(user_id) VALUES(?)').run(u);
     return i.update(complaintsView('Ответственные за дедлайны сохранены.'));
+  }
+  if (action === 'mresp') {
+    setMentorResponsible(i.values);
+    return i.update(mentorRespView(i.values.length ? 'Ответственные за кураторство сохранены.' : 'Ответственные за кураторство убраны.'));
   }
   if (action === 'vr') {
     setConf('vacation_role_id', i.values[0] ?? null);

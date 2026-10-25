@@ -3,7 +3,7 @@ import {
   TextInputBuilder, TextInputStyle, UserSelectMenuBuilder,
 } from 'discord.js';
 import { db, getSetting, setSetting } from './db.js';
-import { destinations, editAll, mirrorsOf, pingIn, sendAll } from './mirror.js';
+import { destinations, editAll, messageUrl, mirrorsOf, pingIn, sendAll } from './mirror.js';
 import { can, roleIdsWith } from './access.js';
 import { C, COLOR, EPH, isOnVacation, msk, mskDate, nowTs, safeText, sendDM, stamp } from './util.js';
 
@@ -15,6 +15,28 @@ export const STATUS = {
 const STATUS_COLOR = { pending: C.warn, active: C.details, done: C.success, failed: C.danger, refused: C.danger, cancelled: C.muted };
 
 const get = (id) => db.prepare('SELECT * FROM mentorships WHERE id=?').get(id);
+
+/* ---------- ответственные за кураторство (/settings → Сотрудники): их упоминают, когда кураторство сдано ---------- */
+db.exec('CREATE TABLE IF NOT EXISTS mentor_responsible (user_id TEXT PRIMARY KEY)');
+export const mentorResponsible = () => db.prepare('SELECT user_id FROM mentor_responsible').all().map((r) => r.user_id);
+export function setMentorResponsible(ids) {
+  db.prepare('DELETE FROM mentor_responsible').run();
+  for (const id of ids) db.prepare('INSERT OR IGNORE INTO mentor_responsible(user_id) VALUES(?)').run(id);
+}
+const responsiblePing = () => mentorResponsible().map((id) => `<@${id}>`).join(' ');
+
+/** Кураторство сдано (завершено, отменено) — сообщение в канал кураторства с упоминанием ответственных */
+async function notifyResponsible(client, f, title, extra) {
+  const ping = responsiblePing();
+  if (!ping) return;
+  const card = messageUrl(client, 'mnt', f.id);
+  await sendAll(client, cardChannels().length ? cardChannels() : [f.channel_id].filter(Boolean), {
+    content: ping,
+    embeds: [new EmbedBuilder().setColor(STATUS_COLOR[f.status]).setTitle(title).setDescription(
+      [`**Куратор:** <@${f.mentor_id}>`, `**Курируемый:** <@${f.mentee_id}>`, ...extra, ...(card ? [`**Карточка:** [открыть](${card})`] : [])].join('\n'))
+      .setFooter({ text: stamp() })],
+  });
+}
 /** Каналы карточек кураторства на всех серверах (по умолчанию — канал панели «Кураторство») */
 const cardChannels = () => destinations('mentoring_cards', 'mentoring');
 const deny = (i, what = 'Нет прав: кураторами управляет руководство.') => i.reply({ content: `⛔ ${what}`, ...EPH });
@@ -214,7 +236,7 @@ async function submitRefuse(client, i) {
 
   const roles = [...new Set([...roleIdsWith('mentoring'), ...roleIdsWith('approve')])];
   await sendAll(client, cardChannels().length ? cardChannels() : [f.channel_id].filter(Boolean), (ch) => ({
-    content: pingIn(ch, roles) || undefined,
+    content: [pingIn(ch, roles), responsiblePing()].filter(Boolean).join(' ') || undefined,
     embeds: [new EmbedBuilder().setColor(C.danger).setTitle('🚫 Куратор отказался от кураторства').setDescription(
       `**Куратор:** <@${f.mentor_id}>\n**Курируемый:** <@${f.mentee_id}>\n` +
       `**Причина:** ${safeText(reason)}\n**Отказал:** <@${i.user.id}>`).setFooter({ text: stamp() })],
@@ -240,6 +262,8 @@ async function submitFinish(client, i, id) {
   const f = get(m.id);
   if (i.isFromMessage()) await i.update(payload(f));
   else { await i.reply({ content: '✅ Кураторство завершено.', ...EPH }); await refreshCard(client, f); }
+  await notifyResponsible(client, f, status === 'done' ? '✅ Кураторство завершено успешно' : '❌ Кураторство завершено неуспешно',
+    [`**Завершил:** <@${i.user.id}>`, ...(review ? [`**Отзыв:** ${safeText(review)}`] : [])]);
 }
 
 const extendModal = (m, kind) =>
@@ -332,6 +356,7 @@ async function submitCancel(client, i, id) {
   const f = get(m.id);
   await i.reply({ content: `🗑️ Кураторство над <@${f.mentee_id}> отменено.`, ...EPH });
   await refreshCard(client, f);
+  await notifyResponsible(client, f, '⚪ Кураторство отменено', [`**Отменил:** <@${i.user.id}>`, `**Причина:** ${safeText(reason)}`]);
 }
 
 /* ---------- роутер ---------- */
