@@ -3,7 +3,7 @@ import {
   TextInputBuilder, TextInputStyle,
 } from 'discord.js';
 import { db } from './db.js';
-import { destinations, editAll, sendAll } from './mirror.js';
+import { destinations, editAll, mirrorsOf, sendAll } from './mirror.js';
 import { can, hasRulesFor, isLeader, isJudge, isSenior } from './access.js';
 import { C, COLOR, EPH, isProsecutor, msk, nowTs, parseDate, safeText, sendDM, stamp } from './util.js';
 
@@ -70,7 +70,7 @@ export function reviewEmbed(c) {
       `**Прокурор:** <@${c.prosecutor_id}>`,
       '',
       `**Документ:** ${doc}`,
-    ].join('\n')).setFooter({ text: stamp(c.created_ts) });
+    ].join('\n')).setFooter({ text: stamp(submittedTs(c)) });
   }
   // после решения — как в оригинале: строки «Номер / Обвиняемый / Статус / Проверил», ниже документ
   const lines = [
@@ -176,8 +176,8 @@ async function createCase(client, i, { owner, number, accused, passport, date, d
     });
   }
   await i.deferReply(EPH);
-  // старые карточки остаются в канале: без выбора решения и с пометкой «Подано повторно» (история видна в /case_history)
-  if (existing) await retireCards(client, existing);
+  // старые карточки запоминаем до отправки новой: потом пометим их «Подано повторно — ссылка на новую»
+  const oldCards = existing ? cardsOf(existing) : [];
 
   let uin = existing?.uin;
   if (existing) {
@@ -193,6 +193,7 @@ async function createCase(client, i, { owner, number, accused, passport, date, d
   addHistory(uin, 'submit', i.user.id, { document, accused, passport: passport || '—', opened_date: date });
   const sent = await sendAll(client, reviewChannels, { embeds: [reviewEmbed(c)], components: reviewComponents(uin) }, { kind: 'case', ref: uin });
   if (sent[0]) db.prepare('UPDATE cases SET review_channel_id=?, review_message_id=? WHERE uin=?').run(sent[0].channelId, sent[0].id, uin);
+  if (existing) await retireCards(client, existing, oldCards, sent);
   // прокурору в ЛС — как в оригинале
   const delivered = await sendDM(client, owner, { embeds: [new EmbedBuilder().setColor(C.success)
     .setTitle(existing ? '✅ Уголовное дело отправлено повторно' : '✅ Уголовное дело зарегистрировано')
@@ -299,17 +300,18 @@ async function submitRequest(client, i) {
   const c = (uin && getCase(uin)) || (number && db.prepare('SELECT * FROM cases WHERE number=? COLLATE NOCASE').get(number));
   if (!c) return i.reply({ content: 'Дело не найдено. Проверьте УИН или номер.', ...EPH });
   // доступ уже есть (прокурор дела, судья, руководство) — одобрение не нужно, но информация всё равно идёт в ЛС
+  await i.deferReply(EPH);
   if (canSee(i, c)) {
     const ok = await sendDM(client, i.user.id, { embeds: [caseEmbed(c)] });
-    return ok ? i.reply({ content: '✅ У вас есть доступ к этому делу — информация отправлена вам в ЛС.', ...EPH })
-      : i.reply({ content: '⚠️ Не удалось написать вам в ЛС: откройте личные сообщения от участников сервера.', ...EPH });
+    return i.editReply(ok ? '✅ У вас есть доступ к этому делу — информация отправлена вам в ЛС.'
+      : '⚠️ Не удалось написать вам в ЛС: откройте личные сообщения от участников сервера.');
   }
   const dup = db.prepare(`SELECT 1 FROM case_requests WHERE uin=? AND requester_id=? AND status='pending'`)
     .get(c.uin, i.user.id);
-  if (dup) return i.reply({ content: 'Ваш запрос уже на рассмотрении.', ...EPH });
+  if (dup) return i.editReply('Ваш запрос уже на рассмотрении.');
   // свой канал «Запросы дел»; не выбран — в «Дела на проверку», как раньше
   const reviewChannels = destinations('case_req_cards', 'case_review');
-  if (!reviewChannels.length) return i.reply({ content: 'Канал для запросов дел не настроен.', ...EPH });
+  if (!reviewChannels.length) return i.editReply('Канал для запросов дел не настроен.');
 
   const r = db.prepare('INSERT INTO case_requests(uin,requester_id,created_ts) VALUES(?,?,?)')
     .run(c.uin, i.user.id, nowTs());
@@ -320,7 +322,7 @@ async function submitRequest(client, i) {
       new ButtonBuilder().setCustomId(`case:ra:${id}`).setLabel('Одобрить').setEmoji('✅').setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId(`case:rd:${id}`).setLabel('Отклонить').setEmoji('❌').setStyle(ButtonStyle.Danger))],
   }, { kind: 'creq', ref: id });
-  return i.reply({ content: 'Запрос отправлен. После одобрения информация придёт вам в ЛС.', ...EPH });
+  return i.editReply('Запрос отправлен. После одобрения информация придёт вам в ЛС.');
 }
 
 /**
@@ -497,19 +499,32 @@ if (!db.prepare("SELECT 1 FROM settings WHERE k='case_history_v1'").get()) {
   db.prepare("INSERT OR REPLACE INTO settings(k,v) VALUES('case_history_v1','1')").run();
 }
 
-/** Подано повторно: старые карточки остаются в канале — без выбора решения и с пометкой */
-async function retireCards(client, c) {
-  const e = EmbedBuilder.from(reviewEmbed(c).toJSON()).setColor(C.muted);
-  e.setDescription(`${e.data.description ?? ''}\n\n↪️ **Подано повторно** — ${msk(nowTs())} MSK, новая карточка ниже`);
-  const payload = { embeds: [e], components: [] };
-  await editAll(client, 'case', c.uin, payload);
-  // карточки, отправленные до синхронизации серверов, — одна копия без записи в mirrors
-  if (c.review_message_id) {
-    const ch = await client.channels.fetch(c.review_channel_id).catch(() => null);
-    const m = await ch?.messages.fetch(c.review_message_id).catch(() => null);
-    if (m && m.components?.length) await m.edit(payload).catch(() => {});
+/** Карточки дела в каналах (все копии + старая одиночная) — [{ channel_id, message_id }] */
+function cardsOf(c) {
+  const list = mirrorsOf('case', c.uin).map((m) => ({ channel_id: m.channel_id, message_id: m.message_id }));
+  if (c.review_message_id && !list.some((m) => m.message_id === c.review_message_id)) {
+    list.push({ channel_id: c.review_channel_id, message_id: c.review_message_id });
+  }
+  return list;
+}
+
+/** Подано повторно: старые карточки остаются в канале — без выбора решения, с пометкой и ссылкой на новую карточку */
+async function retireCards(client, c, cards, sent) {
+  for (const old of cards) {
+    const ch = await client.channels.fetch(old.channel_id).catch(() => null);
+    const m = await ch?.messages.fetch(old.message_id).catch(() => null);
+    if (!m) continue;
+    // ссылка на новую карточку в том же канале (на этом сервере), иначе на первую
+    const fresh = sent.find((x) => x.channelId === old.channel_id) ?? sent[0];
+    const link = fresh ? `[новая карточка](https://discord.com/channels/${fresh.guildId}/${fresh.channelId}/${fresh.id})` : 'новая карточка ниже';
+    const e = EmbedBuilder.from(reviewEmbed(c).toJSON()).setColor(C.muted);
+    e.setDescription(`${e.data.description ?? ''}\n\n↪️ **Подано повторно** — ${link}`);
+    await m.edit({ embeds: [e], components: [] }).catch(() => {});
   }
 }
+
+/** Когда подана последняя версия дела (после повторной подачи — её время, а не первой регистрации) */
+const submittedTs = (c) => db.prepare("SELECT MAX(ts) ts FROM case_history WHERE uin=? AND kind='submit'").get(c.uin)?.ts ?? c.created_ts;
 
 const HIST_DECISION = { approved: '✅ Одобрено', rework: '🔄 На доработку', rejected: '❌ Отклонено' };
 
