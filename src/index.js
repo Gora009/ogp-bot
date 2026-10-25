@@ -123,15 +123,8 @@ const forEdit = (p) => {
 function autoDefer(i) {
   if (!i.isRepliable() || i.isAutocomplete()) return () => {};
   let auto = null; // Promise<'update' | 'reply' | null> — какой ответ бот дал сам
-  const timer = setTimeout(() => {
-    if (i.ackStart || i.replied || i.deferred) return;
-    const onMessage = i.isMessageComponent() || (i.isModalSubmit() && i.isFromMessage());
-    i.autoDeferred = true;
-    auto = (onMessage ? i.deferUpdate() : i.deferReply(EPH))
-      .then(() => (onMessage ? 'update' : 'reply'), (e) => { console.warn(`автоответ «думает…» не удался: ${e.message}`); return null; });
-  }, AUTO_DEFER_MS);
-
   const wrap = (m, fn) => {
+    if (typeof i[m] !== 'function') return; // у слэш-команды нет update/deferUpdate
     const orig = i[m].bind(i);
     i[m] = async (...a) => {
       const kind = auto && await auto;
@@ -158,6 +151,14 @@ function autoDefer(i) {
     await i.deleteReply().catch(() => {}); // «думает…» было скрытым, а ответ должен видеть весь канал
     return i.followUp(p);
   });
+  // таймер — последним: обёртки уже стоят
+  const timer = setTimeout(() => {
+    if (i.ackStart || i.replied || i.deferred) return;
+    const onMessage = i.isMessageComponent() || (i.isModalSubmit() && i.isFromMessage());
+    i.autoDeferred = true;
+    auto = (onMessage ? i.deferUpdate() : i.deferReply(EPH))
+      .then(() => (onMessage ? 'update' : 'reply'), (e) => { console.warn(`автоответ «думает…» не удался: ${e.message}`); return null; });
+  }, AUTO_DEFER_MS);
   return () => clearTimeout(timer);
 }
 
@@ -263,7 +264,9 @@ function boot(useMembers) {
       }
     };
     prettify(i);
-    const stopAutoDefer = autoDefer(i);
+    // страховка не должна мешать самой команде: если она не встала — команда работает без неё
+    let stopAutoDefer = () => {};
+    try { stopAutoDefer = autoDefer(i); } catch (e) { console.error('autoDefer:', e); }
     try {
       await route(client, i);
       stopAutoDefer();
