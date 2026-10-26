@@ -3,8 +3,8 @@ import {
   TextInputBuilder, TextInputStyle, UserSelectMenuBuilder,
 } from 'discord.js';
 import { db, getSetting, setSetting } from './db.js';
-import { destinations, editAll, messageUrl, mirrorsOf, pingIn, sendAll } from './mirror.js';
-import { can, roleIdsWith } from './access.js';
+import { destinations, editAll, messageUrl, mirrorsOf, sendAll } from './mirror.js';
+import { can } from './access.js';
 import { C, COLOR, EPH, isOnVacation, msk, mskDate, nowTs, safeText, sendDM, stamp } from './util.js';
 
 const OPEN = ['pending', 'active'];
@@ -234,15 +234,15 @@ async function submitRefuse(client, i) {
   await i.reply({ content: `🚫 Кураторство №${f.id} (<@${f.mentee_id}>) закрыто отказом.`, ...EPH });
   await refreshCard(client, f);
 
-  const roles = [...new Set([...roleIdsWith('mentoring'), ...roleIdsWith('approve')])];
-  await sendAll(client, cardChannels().length ? cardChannels() : [f.channel_id].filter(Boolean), (ch) => ({
-    content: [pingIn(ch, roles), responsiblePing()].filter(Boolean).join(' ') || undefined,
+  // упоминаем только ответственных за кураторство (/settings → Сотрудники), роли — нет
+  await sendAll(client, cardChannels().length ? cardChannels() : [f.channel_id].filter(Boolean), {
+    content: responsiblePing() || undefined,
     embeds: [new EmbedBuilder().setColor(C.danger).setTitle('🚫 Куратор отказался от кураторства').setDescription(
       `**Куратор:** <@${f.mentor_id}>\n**Курируемый:** <@${f.mentee_id}>\n` +
       `**Причина:** ${safeText(reason)}\n**Отказал:** <@${i.user.id}>`).setFooter({ text: stamp() })],
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`mnt:readd:${f.mentee_id}`).setLabel('Назначить заново').setEmoji('➕').setStyle(ButtonStyle.Primary))],
-  }));
+  });
 }
 
 const finishModal = (m) =>
