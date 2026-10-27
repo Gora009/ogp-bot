@@ -2,7 +2,6 @@ import { EmbedBuilder } from 'discord.js';
 import { db, getSetting, setSetting } from './db.js';
 import { fetchPost, fetchPostDoc, forumThreadUrl } from './forum.js';
 import { askJSON, provider } from './analyze.js';
-import { deleteAll, mirrorsOf, sendAll } from './mirror.js';
 import { C, nowTs, safeText, stamp } from './util.js';
 
 /**
@@ -221,45 +220,33 @@ export function groundsEmbed(c, found, ai) {
   const lines = ['a', 'b', 'v', 'g', 'd'].filter((k) => found[k]).map((k) =>
     `**п. «${LETTER[k]}» — ${GROUND[k]}**\n${found[k].map((x) => `• ${k === 'v' ? x : safeText(x)}`).join('\n')}`);
   return new EmbedBuilder().setColor(C.warn).setTitle('⚠️ Возможные основания для отказа')
-    .setDescription(`Жалоба **№${c.number ?? '?'}** — [ст. 6 ч. 1 Регламента](${reglamentUrl()})\n\n${lines.join('\n\n')}`.slice(0, 4000) +
+    .setDescription(`[Ст. 6 ч. 1 Регламента](${reglamentUrl()})\n\n${lines.join('\n\n')}`.slice(0, 3800) +
       '\n\n-# Подсказка бота — решение принимает исполнитель.')
     .setFooter({ text: `${stamp()}${ai ? '' : ' • без ИИ: проверены только форма, повтор и мат'}` });
 }
 
-const saved = (tid) => {
+/** Сохранённые основания жалобы; null — не проверялась или ничего не найдено */
+export function groundsOf(tid) {
   const r = db.prepare('SELECT * FROM complaint_grounds WHERE thread_id=?').get(tid);
-  return r ? { found: JSON.parse(r.found), ai: !!r.ai } : null;
-};
-
-/** Карточка оснований (если есть) — в каналы, куда ушла карточка жалобы */
-async function postGrounds(client, c, channelIds) {
-  const g = saved(c.thread_id);
-  if (!g || !Object.keys(g.found).length || !channelIds.length) return;
-  await sendAll(client, channelIds, { embeds: [groundsEmbed(c, g.found, g.ai)] }, { kind: 'grounds', ref: c.thread_id });
+  const found = r ? JSON.parse(r.found) : {};
+  return Object.keys(found).length ? { found, ai: !!r.ai } : null;
 }
 
 /**
- * Новая жалоба: проверить и выложить карточку под жалобой. Проверки идут по одной (очередь),
- * чтобы опрос форума не ждал ИИ и пачка новых жалоб не ушла в ИИ разом.
+ * Новая жалоба: проверить. Найдено — onFound() (карточка жалобы перерисовывается уже с основаниями).
+ * Проверки идут по одной (очередь), чтобы опрос форума не ждал ИИ и пачка новых жалоб не ушла в ИИ разом.
  */
 let queue = Promise.resolve();
-export function queueGrounds(client, c, channelIds) {
+export function queueGrounds(c, onFound) {
   queue = queue.then(async () => {
     try {
       const { found, ai } = await checkGrounds(c);
       db.prepare('INSERT OR REPLACE INTO complaint_grounds(thread_id,found,ai,checked_ts) VALUES(?,?,?,?)')
         .run(c.thread_id, JSON.stringify(found), ai ? 1 : 0, nowTs());
-      await postGrounds(client, c, channelIds);
+      if (Object.keys(found).length) await onFound();
     } catch (e) {
       console.error(`Основания отказа, жалоба №${c.number}:`, e.message);
     }
   });
   return queue;
-}
-
-/** Карточку жалобы опубликовали заново (переназначение) — основания переезжают под неё */
-export async function repostGrounds(client, c, channelIds) {
-  if (!mirrorsOf('grounds', c.thread_id).length) return;
-  await deleteAll(client, 'grounds', c.thread_id);
-  await postGrounds(client, c, channelIds);
 }

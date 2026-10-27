@@ -11,7 +11,7 @@ import { rankById, rankOfMember, rankOfText, ranks, reviewersOf } from './hierar
 import { conf } from './config.js';
 import { closedText, extendedText, isAlertMessage, resolveAlerts } from './alerts.js';
 import { deleteAll, destinations, editAll, messageUrl, mirrorsOf, sendAll } from './mirror.js';
-import { queueGrounds, repostGrounds } from './grounds.js';
+import { groundsEmbed, groundsOf, queueGrounds } from './grounds.js';
 import { C, COLOR, EPH, displayNameOf, listProsecutors, msk, nameAndTag, nowTs, safeText, sendDM, stamp } from './util.js';
 
 /** Дедлайн ответа (нажать «Принять») — через столько часов после подачи жалобы: время первого напоминания (по умолчанию 24) */
@@ -221,6 +221,9 @@ function actionRows(c) {
 /** Полное содержимое сообщения жалобы в канале для её текущего состояния. */
 export function messagePayload(c, page = 0) {
   const embeds = [complaintEmbed(c)];
+  // возможные основания для отказа (ст. 6 Регламента) — в том же сообщении, вторым блоком, пока жалоба открыта
+  const g = c.status !== 'closed' && groundsOf(c.thread_id);
+  if (g) embeds.push(groundsEmbed(c, g.found, g.ai));
   if (c.status === 'closed') return { content: '', embeds, components: [] };
   if (!c.assignee_id) return { content: '', embeds, components: unassignedRows(c, page) };
   return { content: c.status === 'accepted' ? '' : `📋 <@${c.assignee_id}>, вам назначена жалоба!`, embeds, components: actionRows(c) };
@@ -352,7 +355,6 @@ async function repostCard(client, f) {
   const sent = await sendAll(client, complaintChannels(), messagePayload(f), { kind: 'complaint', ref: f.thread_id });
   if (sent[0]) db.prepare('UPDATE complaints SET message_id=? WHERE thread_id=?').run(sent[0].id, f.thread_id);
   await linkAssignDM(client, f.thread_id);
-  await repostGrounds(client, f, sent.map((m) => m.channelId));
 }
 
 /* ---------- обработчики ---------- */
@@ -586,7 +588,7 @@ async function postComplaint(client, t) {
   // дубликат номера — следом отдельное предупреждение, туда же, куда ушла карточка
   if (dup) await sendAll(client, sent.map((m) => m.channelId), { embeds: [duplicateEmbed(getComplaint(t.id))] });
   // возможные основания для отказа (ст. 6 Регламента) — отдельной карточкой ниже, в фоне: проверка с ИИ идёт несколько секунд
-  queueGrounds(client, getComplaint(t.id), sent.map((m) => m.channelId));
+  queueGrounds(getComplaint(t.id), () => refreshMessage(client, getComplaint(t.id)));
 }
 
 /** При первом запуске свежие жалобы без ответа (моложе срока ответа) всё равно публикуются */

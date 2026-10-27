@@ -25,9 +25,10 @@ export function installLogo() {
       options = rest;
     } else if (options && typeof options === 'object' && !(options instanceof MessagePayload) && options.embeds?.length) {
       let added = false;
-      const embeds = options.embeds.map((e) => {
+      // герб — только на первом блоке сообщения (второй, например «Возможные основания для отказа», без него)
+      const embeds = options.embeds.map((e, k) => {
         const json = e.toJSON?.() ?? e;
-        if (json.thumbnail) return e;
+        if (k > 0 || json.thumbnail) return e;
         added = true;
         return EmbedBuilder.from(json).setThumbnail(`attachment://${NAME}`);
       });
