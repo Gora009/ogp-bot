@@ -16,6 +16,7 @@ import { faq } from './faq.js';
 import { poll } from './complaints.js';
 import { syncPeople } from './people.js';
 import { mentorResponsible, setMentorResponsible } from './mentoring.js';
+import { reglamentUrl, setReglamentUrl } from './grounds.js';
 import { logFile } from './log.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -157,10 +158,14 @@ function complaintsView(msg = '') {
       '',
       '**Ответственные за дедлайны**',
       resp.map((u) => `<@${u}>`).join(' ') || 'не назначены',
+      '',
+      '**Регламент**',
+      `[Открыть](${reglamentUrl()})`,
+      '-# По нему бот ищет возможные основания для отказа (ст. 6) и присылает их карточкой под жалобой.',
       ...note(msg),
     ]), [
       ...nav('complaints'),
-      row(btn('set:m:times', 'Сроки и назначение'), btn('set:poll', 'Проверить форум сейчас')),
+      row(btn('set:m:times', 'Сроки и назначение'), btn('set:m:reg', 'Ссылка на Регламент'), btn('set:poll', 'Проверить форум сейчас')),
       row(sel),
     ]);
 }
@@ -346,6 +351,8 @@ const MODALS = {
     input('rem', 'Дедлайн ответа, часов от подачи', conf.reminderHours()[0] ?? 24, TextInputStyle.Short, 3),
     input('min', 'Минимум на ответ после назначения, часов', conf.minRespondHours(), TextInputStyle.Short, 3),
     input('rep', 'Повтор после просрочки, часов (0 — нет)', conf.repeatHours(), TextInputStyle.Short, 3)),
+  reg: () => new ModalBuilder().setCustomId('set:s:reg').setTitle('Ссылка на Регламент').addComponents(
+    input('url', 'Тема Регламента на форуме', reglamentUrl(), TextInputStyle.Short, 300)),
   instr: () => new ModalBuilder().setCustomId('set:s:instr').setTitle('Инструкция кураторства').addComponents(
     input('text', 'Текст инструкции', getSetting('mentor_instruction') ?? '', TextInputStyle.Paragraph, 4000, false)),
   guild: () => new ModalBuilder().setCustomId('set:s:guild').setTitle('Разрешить сервер').addComponents(
@@ -374,6 +381,10 @@ function submitModal(i, kind) {
     setConf('min_respond_hours', min);
     setConf('overdue_repeat_hours', rep);
     return ['complaints', 'Сохранено.'];
+  }
+  if (kind === 'reg') {
+    const url = setReglamentUrl(v('url'));
+    return ['complaints', url ? 'Ссылка на Регламент сохранена.' : 'Нужна ссылка на тему форума: https://forum.gta5rp.com/threads/…'];
   }
   if (kind === 'instr') {
     setSetting('mentor_instruction', v('text'));

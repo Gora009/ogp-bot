@@ -374,8 +374,41 @@ const docBody = (text) => { const tag = `document-${randomBytes(4).toString('hex
   .slice(0, MAX_DOC)}\n</${tag}>`; };
 
 /** В журнал — сколько токенов ушло (видно расход в journalctl) */
-const logUsage = (p, input, output, cachedIn) =>
-  console.log(`Разбор ИИ (${p.name}, ${p.model}): вход ${input ?? '?'}${cachedIn ? ` (из кеша сервиса ${cachedIn})` : ''}, ответ ${output ?? '?'} токенов`);
+const logUsage = (p, input, output, cachedIn, what = 'Разбор ИИ') =>
+  console.log(`${what} (${p.name}, ${p.model}): вход ${input ?? '?'}${cachedIn ? ` (из кеша сервиса ${cachedIn})` : ''}, ответ ${output ?? '?'} токенов`);
+
+/**
+ * Короткий запрос к ИИ с ответом в JSON (проверка оснований для отказа и т.п.). null — ИИ не настроен или ответ не JSON.
+ * Неизменный system идёт первым — DeepSeek/OpenAI берут за повтор одинакового начала меньше.
+ */
+export async function askJSON(system, user, { maxTokens: max = 600, what = 'ИИ' } = {}) {
+  const p = provider();
+  if (!p) return null;
+  let out;
+  if (p.anthropic) {
+    const client = await claudeClient(p.key);
+    const msg = await client.messages.create({ model: p.model, max_tokens: max, system, messages: [{ role: 'user', content: user }] });
+    logUsage(p, msg.usage?.input_tokens, msg.usage?.output_tokens, null, what);
+    out = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+  } else {
+    const res = await fetch(`${p.base.replace(/\/$/, '')}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p.key}` },
+      body: JSON.stringify({
+        model: p.model, max_tokens: max, temperature: 0,
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+      }),
+      signal: AbortSignal.timeout(90_000),
+    });
+    if (!res.ok) throw Object.assign(new Error(`${p.name} HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`), { status: res.status });
+    const data = await res.json();
+    logUsage(p, data?.usage?.prompt_tokens, data?.usage?.completion_tokens, data?.usage?.prompt_cache_hit_tokens, what);
+    out = String(data?.choices?.[0]?.message?.content ?? '');
+  }
+  const json = /\{[\s\S]*\}/.exec(out)?.[0];
+  try { return json ? JSON.parse(json) : null; } catch { return null; }
+}
 
 async function viaClaude(p, text, type) {
   const client = await claudeClient(p.key);

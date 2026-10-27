@@ -84,6 +84,29 @@ export async function fetchPost(url) {
   return { title, text: postText($, body) };
 }
 
+/**
+ * Тема для проверки оснований отказа: заголовок, текст первого сообщения и его оформление.
+ * Регламент (ст. 3 ч. 2): шрифт 15, белый, без жирного, курсива, подчёркивания и зачёркивания.
+ * Стандартный текст форума так и выглядит — нарушение видно только по тегам в коде страницы.
+ */
+export async function fetchPostDoc(url) {
+  const $ = cheerio.load(await fetchHtml(url));
+  const title = $('h1.p-title-value').first().clone().children('.label, .label-append').remove().end().text().replace(/\s+/g, ' ').trim();
+  const body = $('.message-body .bbWrapper').first();
+  const has = (sel) => body.find(sel).filter((_, e) => $(e).text().trim()).length > 0;
+  const styles = body.find('[style]').map((_, e) => $(e).attr('style')).get();
+  const colors = styles.map((s) => /(?:^|;)\s*color\s*:\s*([^;]+)/i.exec(s)?.[1]?.trim().toLowerCase()).filter(Boolean)
+    .filter((c) => !/^(white|#fff(fff)?|rgb\(\s*255\s*,\s*255\s*,\s*255\s*\))$/.test(c));
+  // картинки в тексте (ксерокопия паспорта вставлена изображением, а не ссылкой); смайлики не считаем
+  const images = body.find('img').filter((_, e) => !$(e).hasClass('smilie')).length;
+  const sizes = styles.map((s) => /font-size\s*:\s*([^;]+)/i.exec(s)?.[1]?.trim()).filter(Boolean).filter((s) => s !== '15px');
+  const format = {
+    bold: has('b, strong'), italic: has('i, em'), underline: has('u, ins'), strike: has('s, strike, del'),
+    color: colors.length > 0, size: sizes.length > 0,
+  };
+  return { title, text: postText($, body), format, images };
+}
+
 /** Ссылка на тему форума gta5rp.com (только https и только /threads/…), иначе null */
 export function forumThreadUrl(raw) {
   try {
@@ -94,6 +117,7 @@ export function forumThreadUrl(raw) {
 }
 
 function postText($, body) {
+  body.find('script, style, noscript').remove(); // служебный код форума (окно просмотра картинок) — не текст жалобы
   // ссылки на доказательства сохраняем в виде [текст](адрес) — в «Подробно» они кликабельны
   body.find('a[href]').each((_, a) => {
     let url = null;
