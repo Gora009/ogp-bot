@@ -72,15 +72,19 @@ const LINK = /https?:\/\/\S+/i;
  * нумерованный список внутри описания («1. Принять…») пунктом формы не считается.
  */
 function formItems(text) {
-  const items = {};
-  let cur = 0;
-  for (const line of text.split('\n')) {
+  const lines = text.split('\n').map((line) => {
     const m = /^\s*([1-7])\s*[.)]\s*(.*)$/.exec(line);
     const n = m && Number(m[1]);
     const colon = m ? m[2].indexOf(':') : -1;
     const label = colon >= 0 && colon <= 120 ? m[2].slice(0, colon) : '';
-    const labeled = !!m && !!label && FORM[n - 1][1].test(label);
-    if (m && !(n in items) && (labeled || n === cur + 1)) {
+    return { line, m, n, colon, labeled: !!m && !!label && FORM[n - 1][1].test(label) };
+  });
+  // есть пункт с подписью («4. Дата и время события: …») — строка «4. Признать…» из списка требований им не считается
+  const hasLabel = new Set(lines.filter((x) => x.labeled).map((x) => x.n));
+  const items = {};
+  let cur = 0;
+  for (const { line, m, n, colon, labeled } of lines) {
+    if (m && !(n in items) && (labeled || (n === cur + 1 && !hasLabel.has(n)))) {
       cur = n;
       items[n] = labeled ? m[2].slice(colon + 1) : m[2];
       continue;

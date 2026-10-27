@@ -118,6 +118,12 @@ export function forumThreadUrl(raw) {
 
 function postText($, body) {
   body.find('script, style, noscript').remove(); // служебный код форума (окно просмотра картинок) — не текст жалобы
+  // список форума ([LIST=1]): номера пунктов «1. … 7.» рисует браузер, в тексте их нет — дописываем
+  body.find('ol').each((_, ol) => {
+    const start = Number($(ol).attr('start')) || 1;
+    $(ol).children('li').each((k, li) => { $(li).prepend(`\n${start + k}. `).append('\n'); });
+  });
+  body.find('ul').children('li').each((_, li) => { $(li).prepend('\n• ').append('\n'); });
   // ссылки на доказательства сохраняем в виде [текст](адрес) — в «Подробно» они кликабельны
   body.find('a[href]').each((_, a) => {
     let url = null;
