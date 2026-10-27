@@ -10,7 +10,7 @@ import { accusedIds } from './restricted.js';
 import { rankById, rankOfMember, rankOfText, ranks, reviewersOf } from './hierarchy.js';
 import { conf } from './config.js';
 import { closedText, extendedText, isAlertMessage, resolveAlerts } from './alerts.js';
-import { deleteAll, destinations, editAll, mirrorsOf, sendAll } from './mirror.js';
+import { deleteAll, destinations, editAll, messageUrl, mirrorsOf, sendAll } from './mirror.js';
 import { queueGrounds, repostGrounds } from './grounds.js';
 import { C, COLOR, EPH, displayNameOf, listProsecutors, msk, nameAndTag, nowTs, safeText, sendDM, stamp } from './util.js';
 
@@ -250,16 +250,38 @@ export function assign(client, c, userId, auto = false) {
       if (!msg || !(await msg.edit(payload).then(() => true, () => false))) await sendDM(client, c.assignee_id, payload);
     })().catch((e) => console.error(`ЛС «переназначена» по жалобе №${c.number}: ${e.message}`));
   }
-  sendDM(client, userId, {
+  const dm = sendDM(client, userId, {
     embeds: [
       new EmbedBuilder().setColor(COLOR)
         .setTitle(auto ? '📋 Вам автоматически назначена жалоба' : '📋 Вам назначена жалоба')
         .setDescription(`${head(f)}\n\n⏰ **Дедлайн ответа:** ${msk(f.respond_by)}\n⏰ **Дедлайн закрытия:** ${msk(f.close_by)}`)
         .setFooter({ text: stamp(now) }),
     ],
-  }).then((m) => m && db.prepare('UPDATE complaints SET dm_channel_id=?, dm_message_id=? WHERE thread_id=? AND assignee_id=?')
-    .run(m.channelId, m.id, c.thread_id, userId));
+  }).then((m) => {
+    if (m) db.prepare('UPDATE complaints SET dm_channel_id=?, dm_message_id=? WHERE thread_id=? AND assignee_id=?').run(m.channelId, m.id, c.thread_id, userId);
+    return m;
+  });
+  dmSent.set(c.thread_id, dm);
   return f;
+}
+
+/**
+ * «📋 Вам назначена жалоба» в ЛС — ссылкой на карточку жалобы на сервере. Вызывается, когда карточка уже на месте
+ * (опубликована или переопубликована после переназначения): при назначении её ещё может не быть.
+ */
+const dmSent = new Map(); // жалоба → отправка ЛС последнему исполнителю
+export async function linkAssignDM(client, tid) {
+  const pending = dmSent.get(tid);
+  if (!pending) return;
+  dmSent.delete(tid);
+  const m = await pending.catch(() => null);
+  const c = getComplaint(tid);
+  const legacy = !mirrorsOf('complaint', tid).length && c?.message_id && complaintChannels()[0];
+  const url = messageUrl(client, 'complaint', tid)
+    ?? (legacy ? `https://discord.com/channels/${client.channels.cache.get(legacy)?.guildId}/${legacy}/${c.message_id}` : null);
+  if (!m?.embeds?.[0] || !url || url.includes('/undefined/')) return;
+  await m.edit({ embeds: [EmbedBuilder.from(m.embeds[0]).setURL(url)] })
+    .catch((e) => console.error(`ссылка в ЛС по жалобе №${c?.number}: ${e.message}`));
 }
 
 /** Наименее загруженный подходящий прокурор (не в отпуске, не обвиняемый, для жалоб на руководство — старший состав) */
@@ -329,6 +351,7 @@ const isComplaintCard = (messageId, c) => !!messageId && (messageId === c.messag
 async function repostCard(client, f) {
   const sent = await sendAll(client, complaintChannels(), messagePayload(f), { kind: 'complaint', ref: f.thread_id });
   if (sent[0]) db.prepare('UPDATE complaints SET message_id=? WHERE thread_id=?').run(sent[0].id, f.thread_id);
+  await linkAssignDM(client, f.thread_id);
   await repostGrounds(client, f, sent.map((m) => m.channelId));
 }
 
@@ -398,7 +421,8 @@ async function handleComplaint(client, i) {
     }
     const why = ineligible(c, userId);
     if (why) return i.reply({ content: why, ...EPH });
-    return i.update(messagePayload(assign(client, c, userId)));
+    await i.update(messagePayload(assign(client, c, userId)));
+    return linkAssignDM(client, c.thread_id);
   }
 
   // --- принять ---
@@ -558,6 +582,7 @@ async function postComplaint(client, t) {
   // во все каналы «Жалобы»; упоминается только назначенный исполнитель (в тексте карточки), без ролей
   const sent = await sendAll(client, complaintChannels(), () => messagePayload(getComplaint(t.id)), { kind: 'complaint', ref: t.id });
   if (sent[0]) db.prepare('UPDATE complaints SET message_id=? WHERE thread_id=?').run(sent[0].id, t.id);
+  linkAssignDM(client, t.id);
   // дубликат номера — следом отдельное предупреждение, туда же, куда ушла карточка
   if (dup) await sendAll(client, sent.map((m) => m.channelId), { embeds: [duplicateEmbed(getComplaint(t.id))] });
   // возможные основания для отказа (ст. 6 Регламента) — отдельной карточкой ниже, в фоне: проверка с ИИ идёт несколько секунд

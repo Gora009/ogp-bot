@@ -1,7 +1,7 @@
 import { EmbedBuilder } from 'discord.js';
 import { db } from './db.js';
 import { fetchThreadState, fetchThreads } from './forum.js';
-import { assign, pickAuto, refreshMessage } from './complaints.js';
+import { assign, linkAssignDM, pickAuto, refreshMessage } from './complaints.js';
 import { postAlert } from './alerts.js';
 import { C, msk, nowTs, sendDM, stamp } from './util.js';
 import { conf } from './config.js';
@@ -157,6 +157,7 @@ export async function autoAssign(client) {
       const uid = pickAuto(c);
       if (!uid) continue; // для этой жалобы подходящих нет (например, нет старшего состава)
       await refreshMessage(client, assign(client, c, uid, true));
+      linkAssignDM(client, c.thread_id);
       n++;
     }
   } finally {
