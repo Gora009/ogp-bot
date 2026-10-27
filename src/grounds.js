@@ -91,7 +91,7 @@ function formItems(text) {
   return items;
 }
 
-function formIssues(title, text, number, format, images = 0) {
+function formIssues(title, text, format, images = 0) {
   const out = [];
   const petition = /ходатайств/i.test(text.slice(0, 600)) && !/нарушител/i.test(text);
   if (petition) {
@@ -118,21 +118,13 @@ function formIssues(title, text, number, format, images = 0) {
         if (!LINK.test(items[6]) && !images && !/ксерокоп[^\n]*https?:\/\//i.test(text)) out.push('нет ссылки на ксерокопию паспорта (пункт 6)');
       }
     }
-    // заголовок (ст. 3 ч. 7): «ОБРАЩЕНИЕ В ОФИС ГЕНЕРАЛЬНОГО ПРОКУРОРА №XXXX ОТ ГР-А [ИМЯ И ФАМИЛИЯ]»
+    // заголовок (ст. 3 ч. 7): «ОБРАЩЕНИЕ В ОФИС ГЕНЕРАЛЬНОГО ПРОКУРОРА №XXXX ОТ ГР-А [ИМЯ И ФАМИЛИЯ]».
+    // Пропущенное «ОТ» и номер не по порядку не отмечаем — так пишут почти все, а номера на форуме идут с пропусками
     const t = /обращение\s+в\s+офис\s+генерального\s+прокурора\s*№\s*\d+\s*(от\s+)?гр(?:-|\.|ажданин)?[а-я]*\.?\s*(.*)$/i.exec(title);
     if (!t) out.push('заголовок не по форме «ОБРАЩЕНИЕ В ОФИС ГЕНЕРАЛЬНОГО ПРОКУРОРА №… ОТ ГР-А …»');
-    else {
-      if (!t[1]) out.push('в заголовке нет «ОТ» перед «ГР-А»');
-      if (!/[A-Za-zА-Яа-яЁё]{2,}\s+[A-Za-zА-Яа-яЁё]{2,}/.test(t[2])) out.push('в заголовке нет имени и фамилии');
-    }
+    else if (!/[A-Za-zА-Яа-яЁё]{2,}\s+[A-Za-zА-Яа-яЁё]{2,}/.test(t[2])) out.push('в заголовке нет имени и фамилии');
   }
   if (PLACEHOLDER.test(text)) out.push('остался текст из образца (не заменён своим)');
-  // номер по порядку (ст. 3 ч. 7): предыдущее обращение на форуме — №N-1
-  if (number) {
-    const prev = db.prepare(`SELECT number FROM complaints WHERE number IS NOT NULL AND CAST(number AS INTEGER)<?
-                             ORDER BY CAST(number AS INTEGER) DESC LIMIT 1`).get(Number(number));
-    if (prev && Number(number) - Number(prev.number) > 1) out.push(`номер №${number} не следующий по порядку (предыдущий на форуме — №${prev.number})`);
-  }
   const marks = [format?.bold && 'жирный', format?.italic && 'курсив', format?.underline && 'подчёркивание',
     format?.strike && 'зачёркивание', format?.color && 'цветной текст', format?.size && 'другой размер шрифта'].filter(Boolean);
   if (marks.length) out.push(`выделение текста: ${marks.join(', ')} (ст. 3 ч. 2)`);
@@ -210,7 +202,7 @@ async function aiIssues(title, text) {
 /** Возможные основания: { a: [...], b: [...], ... } — пустые не включаются */
 export async function checkGrounds(c, preloaded = null) {
   const doc = preloaded ?? await fetchPostDoc(c.url);
-  const found = { a: formIssues(doc.title || c.title, doc.text, c.number, doc.format, doc.images), v: repeatIssues(c), d: swearIssues(doc.text) };
+  const found = { a: formIssues(doc.title || c.title, doc.text, doc.format, doc.images), v: repeatIssues(c), d: swearIssues(doc.text) };
   let ai = false;
   try {
     const r = await aiIssues(doc.title || c.title, doc.text);
