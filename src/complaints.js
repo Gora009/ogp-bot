@@ -283,7 +283,9 @@ export async function linkAssignDM(client, tid) {
   const url = messageUrl(client, 'complaint', tid)
     ?? (legacy ? `https://discord.com/channels/${client.channels.cache.get(legacy)?.guildId}/${legacy}/${c.message_id}` : null);
   if (!m?.embeds?.[0] || !url || url.includes('/undefined/')) return;
-  await m.edit({ embeds: [EmbedBuilder.from(m.embeds[0]).setURL(url)] })
+  // герб — вложение сообщения: embed должен ссылаться на него как attachment://, иначе после правки
+  // Discord показывает вложение отдельной картинкой над карточкой
+  await m.edit({ embeds: [EmbedBuilder.from(m.embeds[0]).setURL(url).setThumbnail('attachment://logo.webp')] })
     .catch((e) => console.error(`ссылка в ЛС по жалобе №${c?.number}: ${e.message}`));
 }
 
