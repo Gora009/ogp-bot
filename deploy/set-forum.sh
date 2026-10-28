@@ -16,8 +16,9 @@ for d in /opt/ogp-bot /opt/ogp-bot-2; do
 done
 unset FPASS
 
-# старая сессия другого аккаунта больше не нужна — бот войдёт заново при первом запросе
+# оба бота перезапускаются и входят на форум при первом запросе
 systemctl restart ogp-bot
+systemctl list-unit-files ogp-bot-2.service >/dev/null 2>&1 && systemctl restart ogp-bot-2
 sleep 15
-journalctl -u ogp-bot --since "20 sec ago" --no-pager | grep -E "Запущен|Вход на форум|вход на форум|Forum HTTP" || true
+journalctl -u ogp-bot -u ogp-bot-2 --since "20 sec ago" --no-pager | grep -E "Запущен|Вход на форум|вход на форум|Forum HTTP" || true
 echo "Готово. Строка «Вход на форум: …» — бот вошёл."
