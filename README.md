@@ -43,11 +43,4 @@ cp deploy/ogp-bot.service /etc/systemd/system/ && systemctl enable --now ogp-bot
 
 Данные хранятся в `data/bot.db` (SQLite) — в репозиторий не попадают.
 
-## Второй бот (другой сервер GTA5RP)
 
-Тот же код, отдельная установка на том же VPS: папка `/opt/ogp-bot-2`, служба `ogp-bot-2`, своя база и `.env`.
-Код второго бота — ветка `server2`; первого — `main`.
-
-- `update-server.bat 1` — обновить первого бота (ветка `main`), `update-server.bat 2` — второго (ветка `server2`).
-- Перенести изменения из `main` во второго бота: `git checkout server2 && git merge main && git checkout main`, затем `update-server.bat 2`.
-- `set-token-2.bat` — вписать токен второго бота на сервер и запустить его (ввод скрыт).

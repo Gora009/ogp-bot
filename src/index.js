@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
-import { Client, GatewayIntentBits, MessageFlags, MessageFlagsBitField, Partials } from 'discord.js';
+import { Client, GatewayIntentBits, MessageFlags, MessageFlagsBitField } from 'discord.js';
 import {
   COMMAND_PERMS, can, denyText, setAccessChangeHook, setAccessClient, syncProsecutorRecord, trustedUsers,
 } from './access.js';
@@ -25,7 +25,6 @@ import { acquireLock } from './lock.js';
 import { installLog, logAction } from './log.js';
 import { analyze } from './analyze.js';
 import { distribution, profile } from './staff.js';
-import { dmRoastEnabled, installDmRoast } from './dmroast.js';
 
 const { DISCORD_TOKEN } = process.env;
 const POLL_MS = Math.max(10, Number(process.env.POLL_SECONDS || 30)) * 1000;
@@ -195,10 +194,7 @@ async function route(client, i) {
 function boot(useMembers) {
   if (!useMembers) console.warn('⚠️ Запуск без Server Members Intent: сверка баз, /check_members и роль «Отпуск» не работают. Включите интент в Developer Portal → Bot.');
   const client = new Client({
-    intents: [GatewayIntentBits.Guilds, ...(useMembers ? [GatewayIntentBits.GuildMembers] : []),
-      // ответы в ЛС (src/dmroast.js): личные сообщения приходят боту, только если он их слушает
-      ...(dmRoastEnabled() ? [GatewayIntentBits.DirectMessages] : [])],
-    ...(dmRoastEnabled() ? { partials: [Partials.Channel] } : {}),
+    intents: [GatewayIntentBits.Guilds, ...(useMembers ? [GatewayIntentBits.GuildMembers] : [])],
     // бот упоминает только конкретных людей и роли; @everyone/@here не сработают ни при каком тексте
     allowedMentions: { parse: ['users', 'roles'], repliedUser: false },
     // зависшее соединение с Discord: по умолчанию 15 с × 4 попытки (до минуты тишины) — ждём меньше и повторяем один раз
@@ -213,7 +209,6 @@ function boot(useMembers) {
   setAccessClient(client); // права по названиям ролей серверов
   // базы прокуроров и судей — по ролям
   installPeopleSync(client);
-  installDmRoast(client);
   setAccessChangeHook(() => scheduleSync(client));
 
   client.once('clientReady', async () => {
