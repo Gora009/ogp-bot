@@ -5,14 +5,15 @@
 # Кука при вводе не видна и никуда, кроме .env ботов, не записывается.
 set -euo pipefail
 
-read -r -s -p "Значение куки xf_user (не отображается): " FCOOKIE; echo
-FCOOKIE="${FCOOKIE#xf_user=}"
+read -r -s -p "Значение куки xf_user (или «xf_session=…», если xf_user нет; не отображается): " FCOOKIE; echo
 if [[ -z "$FCOOKIE" ]]; then echo "Пусто — ничего не изменено."; exit 1; fi
+# только значение — это xf_user; «имя=значение; имя2=значение2» (например xf_session) — как есть
+[[ "$FCOOKIE" == *=* ]] || FCOOKIE="xf_user=$FCOOKIE"
 
 for d in /opt/ogp-bot /opt/ogp-bot-2; do
   [[ -f "$d/.env" ]] || continue
   sed -i '/^FORUM_USER=/d;/^FORUM_PASSWORD=/d;/^FORUM_COOKIE=/d' "$d/.env"
-  printf 'FORUM_COOKIE=xf_user=%s\n' "$FCOOKIE" >> "$d/.env"
+  printf 'FORUM_COOKIE=%s\n' "$FCOOKIE" >> "$d/.env"
   echo "Записано в $d/.env"
 done
 unset FCOOKIE
