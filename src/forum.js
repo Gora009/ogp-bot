@@ -1,5 +1,6 @@
 import * as cheerio from 'cheerio';
 import { pathToFileURL } from 'node:url';
+import { getSetting, setSetting } from './db.js';
 
 const BASE = 'https://forum.gta5rp.com';
 
@@ -8,14 +9,80 @@ const BASE = 'https://forum.gta5rp.com';
  * из-за этого новые жалобы приходили с опозданием до 5 минут. Уникальный параметр в адресе обходит кеш.
  */
 const fresh = (url) => `${url}${url.includes('?') ? '&' : '?'}_=${Date.now()}`;
+const UA = 'Mozilla/5.0 (TurgovBot)';
 
-async function fetchHtml(url) {
+/**
+ * Вход на форум. С 28.10.2026 форум не пускает гостей (403 и страница «Вход»), поэтому бот заходит под своим
+ * аккаунтом: FORUM_USER и FORUM_PASSWORD в .env (вписывает владелец на сервере). Куки сессии хранятся в базе —
+ * после перезапуска бот не входит заново, пока форум не «разлогинит» его.
+ */
+const jar = new Map(Object.entries(JSON.parse(getSetting('forum_cookies') ?? '{}')));
+const cookieHeader = () => [...jar].map(([k, v]) => `${k}=${v}`).join('; ');
+function keepCookies(res) {
+  for (const c of res.headers.getSetCookie?.() ?? []) {
+    const [pair, ...attrs] = c.split(';');
+    const eq = pair.indexOf('=');
+    const name = pair.slice(0, eq).trim();
+    const value = pair.slice(eq + 1).trim();
+    const expired = attrs.some((a) => /max-age=0|expires=thu, 01 jan 1970/i.test(a.trim())) || value === 'deleted';
+    if (expired || !value) jar.delete(name); else jar.set(name, value);
+  }
+  setSetting('forum_cookies', JSON.stringify(Object.fromEntries(jar)));
+}
+const loggedOut = (html) => /<html[^>]*data-logged-in="false"/.test(html);
+
+let loginJob = null;
+let loginFailedAt = 0;
+async function login() {
+  const user = process.env.FORUM_USER?.trim();
+  const pass = process.env.FORUM_PASSWORD;
+  if (!user || !pass) throw new Error('форум требует вход: впишите FORUM_USER и FORUM_PASSWORD в .env на сервере');
+  // неверный пароль — не долбим форум входами (могут заблокировать аккаунт): следующая попытка через 10 минут
+  if (Date.now() - loginFailedAt < 10 * 60_000) throw new Error('вход на форум не удался недавно — следующая попытка позже');
+  loginJob ??= (async () => {
+    try {
+      const page = await fetch(`${BASE}/login/`, { headers: { 'User-Agent': UA, Cookie: cookieHeader() }, signal: AbortSignal.timeout(15000) });
+      keepCookies(page);
+      const token = /data-csrf="([^"]+)"/.exec(await page.text())?.[1];
+      if (!token) throw new Error('на странице входа нет токена');
+      const res = await fetch(`${BASE}/login/login`, {
+        method: 'POST',
+        redirect: 'manual', // куки входа приходят в ответе-перенаправлении
+        headers: { 'User-Agent': UA, Cookie: cookieHeader(), 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ login: user, password: pass, remember: '1', _xfToken: token, _xfRedirect: `${BASE}/` }),
+        signal: AbortSignal.timeout(15000),
+      });
+      keepCookies(res);
+      if (!jar.has('xf_user')) {
+        const why = res.status === 200 ? /class="blockMessage[^"]*--error[^"]*"[^>]*>([\s\S]*?)<\/div>/.exec(await res.text())?.[1]?.replace(/<[^>]+>/g, '').trim() : null;
+        throw new Error(`вход на форум не удался${why ? `: ${why}` : ` (HTTP ${res.status})`}`);
+      }
+      console.log(`Вход на форум: ${user}`);
+    } catch (e) {
+      loginFailedAt = Date.now();
+      throw e;
+    } finally {
+      loginJob = null;
+    }
+  })();
+  return loginJob;
+}
+
+async function fetchHtml(url, retry = true) {
   const res = await fetch(fresh(url), {
-    headers: { 'User-Agent': 'Mozilla/5.0 (TurgovBot)', 'Cache-Control': 'no-cache' },
+    headers: { 'User-Agent': UA, 'Cache-Control': 'no-cache', ...(jar.size ? { Cookie: cookieHeader() } : {}) },
     signal: AbortSignal.timeout(15000),
   });
+  if (res.headers.getSetCookie?.().length) keepCookies(res);
+  const html = res.ok || res.status === 403 ? await res.text() : '';
+  // гостей не пускают (403) или сессия истекла — входим и повторяем запрос один раз
+  if ((res.status === 403 || (res.ok && loggedOut(html))) && retry && process.env.FORUM_USER) {
+    await login();
+    return fetchHtml(url, false);
+  }
+  if (res.status === 403 && !process.env.FORUM_USER) throw new Error('Forum HTTP 403: форум требует вход — впишите FORUM_USER и FORUM_PASSWORD в .env');
   if (!res.ok) throw new Error(`Forum HTTP ${res.status}`);
-  return res.text();
+  return html;
 }
 
 /** Одна страница раздела (1 — первая) */
