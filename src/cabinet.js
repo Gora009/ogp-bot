@@ -50,13 +50,15 @@ function position(member) {
 const personName = (uid) => db.prepare('SELECT name FROM prosecutors WHERE user_id=?').get(uid)?.name ?? null;
 /**
  * Имя человека для графиков и списков: ник на сервере (из Discord), иначе имя в базе, иначе имя аккаунта.
- * Без приставки должности: «ГП | Kai» → «Kai». Подгружается заранее — render() синхронный.
+ * Без приставки должности: «ГП | Kai» → «Kai». Только из памяти бота и базы — без запросов к Discord:
+ * раздел открывается одним ответом на нажатие (отдельная правка после «думает…» в эфемерном сообщении
+ * Discord показывал криво — герб отдельной картинкой над старой карточкой).
  */
-async function loadNames(i, ids) {
+function loadNames(i, ids) {
   const names = new Map();
   for (const id of new Set(ids)) {
-    const m = i.guild ? await i.guild.members.fetch(id).catch(() => null) : null;
-    const u = m ? null : await i.client?.users.fetch(id).catch(() => null);
+    const m = i.guild?.members.cache.get(id);
+    const u = m ? null : i.client?.users?.cache.get(id);
     const raw = m?.displayName ?? personName(id) ?? u?.globalName ?? u?.username ?? 'Сотрудник';
     names.set(id, raw.split('|').pop().trim() || raw);
   }
@@ -216,9 +218,5 @@ export async function handleCab(client, i) {
   if (flag === 'f' && !STATS.has(view)) return i.reply({ content: '❌ Фильтр доступен только для статистики.', ...EPH });
   const v = ['main', 'complaints', 'cases', 'vacation', 'load', 'vacations'].includes(view) ? view : 'main';
   const per = Object.hasOwn(PERIODS, period) ? period : 'all';
-  // имена людей из Discord подгружаются заранее — ответ на нажатие должен уйти за 3 секунды, поэтому сначала deferUpdate
-  const ids = namesNeeded(v, per);
-  if (!ids.length) return i.update(withLogo(render(i, v, per, Number(p) || 0), v));
-  await i.deferUpdate();
-  return i.editReply(withLogo(render(i, v, per, Number(p) || 0, await loadNames(i, ids)), v));
+  return i.update(withLogo(render(i, v, per, Number(p) || 0, loadNames(i, namesNeeded(v, per))), v));
 }
