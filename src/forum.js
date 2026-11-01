@@ -193,6 +193,8 @@ function postText($, body) {
 /** «Robby Blanc | 269587» → «Robby Blanc»: отрезаем паспорт и разделители */
 export function applicantName(s) {
   const name = String(s).replace(/[*[\]]/g, '')
+    // ещё одна подпись внутри пункта: «Имя и фамилия: Markus DeHatfild», «ФИО: …», «Name: …» → только имя
+    .replace(/^\s*(?:[^:\n]{0,40}(?:имя|фамили|фио|name|ник)[^:\n]{0,40}):\s*/i, '')
     // «гражданин штата Сан-Андреас Марио Бонг», «гр. Марио Бонг» → «Марио Бонг»
     .replace(/^\s*(?:я,?\s*)?(?:граждан\S*|гр\.)\s+(?:штата\s+[^\s,]+\s+)?/i, '')
     .split(/[|,;/#(]|\s[-–—]\s|\s№|\d{3,}|\s(?:id|айди|паспорт|пасспорт|пасп|номер|ном|pass|passport|п\.)(?=[\s.:№-]|$)/i)[0].replace(/[\s.:-]+$/, '').replace(/\s+/g, ' ').trim();
@@ -239,7 +241,8 @@ export function parseThreads(html) {
       title,
       number: (title.match(/[№N]\s*o?\s*(\d{1,6})/i) || [])[1] ?? null,
       author: $el.attr('data-author') || '',
-      url: BASE + a.attr('href'),
+      // вошедшему на форум ссылки в списке ведут на «непрочитанное» (…/unread) — нужна сама тема
+      url: BASE + a.attr('href').replace(/(\/threads\/[^/]+\.\d+\/).*$/, '$1'),
       createdTs: ts,
       replies: parseInt($el.find('.structItem-cell--meta dd').first().text().replace(/\D/g, ''), 10) || 0,
       locked: $el.hasClass('is-locked'),
